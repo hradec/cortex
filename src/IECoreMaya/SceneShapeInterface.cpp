@@ -101,6 +101,7 @@ MObject SceneShapeInterface::aDrawChildBounds;
 MObject SceneShapeInterface::aDrawTagsFilter;
 MObject SceneShapeInterface::aQuerySpace;
 MObject SceneShapeInterface::aTime;
+MObject SceneShapeInterface::aOutTime;
 MObject SceneShapeInterface::aSceneQueries;
 MObject SceneShapeInterface::aAttributeQueries;
 MObject SceneShapeInterface::aOutputObjects;
@@ -225,6 +226,13 @@ MStatus SceneShapeInterface::initialize()
 	
 	s = addAttribute( aTime );
 
+	aOutTime = uAttr.create( "outTime", "otm", MFnUnitAttribute::kTime, 0.0, &s );
+	uAttr.setReadable( true );
+	uAttr.setWritable( false );
+	uAttr.setStorable( false );
+	
+	s = addAttribute( aOutTime );
+	
 	// Queries
 	
 	aSceneQueries = tAttr.create( "queryPaths", "qpa", MFnData::kString, &s );
@@ -324,7 +332,7 @@ MStatus SceneShapeInterface::initialize()
 	cAttr.setIndexMatters( true );
 	cAttr.setUsesArrayDataBuilder( true );
 	cAttr.setStorable( false );
-	
+
 	s = addAttribute( aTransform );
 	
 	// Bounding box
@@ -381,6 +389,8 @@ MStatus SceneShapeInterface::initialize()
 	cAttr.addChild( aBoundMin );
 	cAttr.addChild( aBoundMax );
 	cAttr.addChild( aBoundCenter );
+	cAttr.setReadable( true );
+	cAttr.setWritable( false );
 	cAttr.setArray( true );
 	cAttr.setIndexMatters( true );
 	cAttr.setUsesArrayDataBuilder( true );
@@ -409,6 +419,8 @@ MStatus SceneShapeInterface::initialize()
 
 	aAttributes = cAttr.create( "attributes", "ott" );
 	cAttr.addChild( aAttributeValues );
+	cAttr.setReadable( true );
+	cAttr.setWritable( false );
 	cAttr.setArray( true );
 	cAttr.setIndexMatters( true );
 	cAttr.setUsesArrayDataBuilder( true );
@@ -427,6 +439,8 @@ MStatus SceneShapeInterface::initialize()
 	attributeAffects( aQuerySpace, aTransform );
 	attributeAffects( aQuerySpace, aBound );
 	attributeAffects( aQuerySpace, aOutputObjects );
+	
+	attributeAffects( aTime, aOutTime );
 
 	return s;
 }
@@ -839,6 +853,14 @@ MStatus SceneShapeInterface::compute( const MPlug &plug, MDataBlock &dataBlock )
 			}
 		}
 	}
+	else if( topLevelPlug == aOutTime )
+	{
+		MDataHandle timeHandle = dataBlock.inputValue( aTime );
+		MTime time = timeHandle.asTime();
+		
+		MDataHandle outTimeHandle = dataBlock.outputValue( aOutTime );
+		outTimeHandle.setMTime( time );
+	}
 
 	return MS::kSuccess;
 }
@@ -942,6 +964,11 @@ void SceneShapeInterface::buildScene( IECoreGL::RendererPtr renderer, ConstScene
 	MPlug pObjectOnly( thisMObject(), aObjectOnly );
 	bool objectOnly;
 	pObjectOnly.getValue( objectOnly );
+	
+	if( !drawGeometry && !drawBounds )
+	{
+		return;
+	}
 
 	MPlug pDrawTagsFilter( thisMObject(), aDrawTagsFilter );
 	MString drawTagsFilter;
@@ -1022,8 +1049,6 @@ void SceneShapeInterface::recurseBuildScene( IECoreGL::Renderer * renderer, cons
 	if( drawBounds && pathStr != "/" )
 	{
 		AttributeBlock aBox(renderer);
-		renderer->setAttribute( "gl:primitive:wireframe", new BoolData( true ) );
-		renderer->setAttribute( "gl:primitive:solid", new BoolData( false ) );
 		renderer->setAttribute( "gl:curvesPrimitive:useGLLines", new BoolData( true ) );
 
 		Box3d b = subSceneInterface->readBound( time );
