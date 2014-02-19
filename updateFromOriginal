@@ -1,4 +1,6 @@
+sudo route add default gw 192.168.0.1 eth0
 git remote add upstream https://github.com/ImageEngine/cortex.git
 git fetch upstream
 git checkout master && git merge upstream/master && git push && \
 git checkout atomo && git merge master   && git push
+sudo route del default gw 192.168.0.1 eth0
