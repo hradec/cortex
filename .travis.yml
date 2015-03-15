@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 language: c
 compiler:
   - gcc
@@ -27,4 +26,3 @@ compiler:
     #
     # https://svn.boost.org/trac/boost/ticket/6156
     - gcc
->>>>>>> master
