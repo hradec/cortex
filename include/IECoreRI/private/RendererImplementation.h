@@ -41,6 +41,8 @@
 #include "tbb/recursive_mutex.h"
 #include "tbb/mutex.h"
 
+#include "boost/make_shared.hpp"
+
 #include "ri.h"
 
 #include "IECore/CachedReader.h"
@@ -54,11 +56,14 @@
 #include "IECore/SpherePrimitive.h"
 #include "IECore/NURBSPrimitive.h"
 #include "IECore/PatchMeshPrimitive.h"
+#include "IECore/private/TransformStack.h"
 
 #include "IECoreRI/Export.h"
-
 #include "IECoreRI/Renderer.h"
-#include "IECoreRI/private/TransformStack.h"
+
+#ifdef IECORERI_WITH_NSI
+#include "IECoreRI/NSI/private/ShaderState.h"
+#endif // IECORERI_WITH_NSI
 
 namespace IECoreRI
 {
@@ -151,6 +156,13 @@ class IECORERI_API RendererImplementation : public IECore::Renderer
 			// accessed from multiple threads when running threaded procedurals
 			typedef tbb::recursive_mutex ObjectHandlesMutex;
 			ObjectHandlesMutex objectHandlesMutex;
+#ifdef IECORERI_WITH_NSI
+			SharedData()
+				:	handleGenerator( boost::make_shared<NSI::HandleGenerator>() )
+			{
+			}
+			NSI::HandleGeneratorPtr handleGenerator;
+#endif
 		};
 				
 		RtContextHandle m_context;
@@ -193,7 +205,7 @@ class IECORERI_API RendererImplementation : public IECore::Renderer
 		// Before RiWorldBegin we have to track the transform
 		// ourselves (because we must invert cortex camera
 		// transforms to get renderman camera transforms).
-		TransformStack m_preWorldTransform;
+		IECore::TransformStack m_preWorldTransform;
 		size_t m_numDisplays;
 		std::string m_lastCamera;
 		bool m_inWorld;
@@ -203,8 +215,10 @@ class IECORERI_API RendererImplementation : public IECore::Renderer
 
 		struct AttributeState
 		{
-			AttributeState();
-			AttributeState( const AttributeState &other );
+#ifdef IECORERI_WITH_NSI
+			AttributeState( const NSI::ShaderState &nsiShaderState );
+			NSI::ShaderState nsiShaderState;
+#endif // IECORERI_WITH_NSI
 			std::map<std::string, std::string> primVarTypeHints;
 		};
 		std::stack<AttributeState> m_attributeStack;

@@ -3,7 +3,7 @@
 #  Copyright 2010 Dr D Studios Pty Limited (ACN 127 184 954) (Dr. D Studios),
 #  its affiliates and/or its licensors.
 #
-#  Copyright (c) 2010-2013, Image Engine Design Inc. All rights reserved.
+#  Copyright (c) 2010-2015, Image Engine Design Inc. All rights reserved.
 #
 #  Redistribution and use in source and binary forms, with or without
 #  modification, are permitted provided that the following conditions are
@@ -54,6 +54,8 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		obj = hou.node("/obj")
 		geo = obj.createNode("geo", run_init_scripts=False)
 		torus = geo.createNode( "torus" )
+		torus.parm( "rows" ).set( 10 )
+		torus.parm( "cols" ).set( 10 )
 		
 		return torus
 
@@ -64,6 +66,7 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		facet = geo.createNode( "facet" )
 		facet.parm("postnml").set(True)
 		points = geo.createNode( "scatter" )
+		points.parm( "npts" ).set( 5000 )
 		facet.setInput( 0, box )
 		points.setInput( 0, facet )
 		
@@ -419,10 +422,10 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		self.assert_( result.arePrimitiveVariablesValid() )
 		
 		attr.parm("type").set( 3 ) # string
-		attr.parm( "string" ).set( "string $PT!" )
+		attr.parm( "string" ).setExpression("'string %06d!' % pwd().curPoint().number()", hou.exprLanguage.Python)
 		result = IECoreHoudini.FromHoudiniPointsConverter( attr ).convert()
 		self.assertEqual( result["test_attribute"].data.typeId(), IECore.TypeId.StringVectorData )
-		self.assertEqual( result["test_attribute"].data[10], "string 10!" )
+		self.assertEqual( result["test_attribute"].data[10], "string 000010!" )
 		self.assertEqual( result["test_attribute"].data.size(), 100 )
 		self.assertEqual( result["test_attribute"].interpolation, IECore.PrimitiveVariable.Interpolation.Constant )
 		self.assertEqual( result["test_attributeIndices"].data.typeId(), IECore.TypeId.IntVectorData )
@@ -744,7 +747,11 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		
 		converter = IECoreHoudini.FromHoudiniPolygonsConverter( uvunwrap )
 		result = converter.convert()
-		self.assertEqual( result.keys(), [ "Cs", "P", "Pref", "s", "t", "varmap", "width" ] )
+		if hou.applicationVersion()[0] >= 15 :
+			self.assertEqual( result.keys(), [ "Cs", "P", "Pref", "s", "t", "width" ] )
+		else :
+			self.assertEqual( result.keys(), [ "Cs", "P", "Pref", "s", "t", "varmap", "width" ] )
+		
 		self.assertTrue( result.arePrimitiveVariablesValid() )
 		self.assertEqual( result["P"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
 		self.assertEqual( result["Pref"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
@@ -766,7 +773,10 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		
 		converter["convertStandardAttributes"].setTypedValue( False )
 		result = converter.convert()
-		self.assertEqual( result.keys(), [ "Cd", "P", "pscale", "rest", "uv", "varmap" ] )
+		if hou.applicationVersion()[0] >= 15 :
+			self.assertEqual( result.keys(), [ "Cd", "P", "pscale", "rest", "uv" ] )
+		else :
+			self.assertEqual( result.keys(), [ "Cd", "P", "pscale", "rest", "uv", "varmap" ] )
 		self.assertTrue( result.arePrimitiveVariablesValid() )
 		self.assertEqual( result["P"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
 		self.assertEqual( result["rest"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
@@ -810,6 +820,18 @@ class TestFromHoudiniPolygonsConverter( IECoreHoudini.TestCase ) :
 		self.assertTrue( "ieMeshInterpolation" not in result.keys() )
 		self.assertEqual( result.interpolation, "linear" )
 		self.assertTrue( "N" in result.keys() )
+	
+	def testRename( self ) :
+		
+		torus = self.createTorus()
+		name = torus.createOutputNode( "name" )
+		name.parm( "name1" ).set( "foo" )
+		rename = name.createOutputNode( "name" )
+		rename.parm( "name1" ).set( "bar" )
+		
+		converter = IECoreHoudini.FromHoudiniGeometryConverter.create( rename )
+		self.assertTrue( isinstance( converter, IECoreHoudini.FromHoudiniPolygonsConverter ) )
+		self.assertTrue( isinstance( converter.convert(), IECore.MeshPrimitive ) )
 
 if __name__ == "__main__":
     unittest.main()

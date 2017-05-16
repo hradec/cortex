@@ -40,6 +40,7 @@ import IECore
 import IECoreHoudini
 import unittest
 import os
+import math
 
 class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 
@@ -54,6 +55,8 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		obj = hou.node("/obj")
 		geo = obj.createNode("geo", run_init_scripts=False)
 		torus = geo.createNode( "torus" )
+		torus.parm( "rows" ).set( 10 )
+		torus.parm( "cols" ).set( 10 )
 		
 		return torus
 
@@ -64,6 +67,7 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		facet = geo.createNode( "facet" )
 		facet.parm("postnml").set(True)
 		points = geo.createNode( "scatter" )
+		points.parm( "npts" ).set( 5000 )
 		facet.setInput( 0, box )
 		points.setInput( 0, facet )
 		
@@ -307,12 +311,56 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		vert_f3.parm("value3").setExpression("$VTX*0.1")
 		vert_f3.setInput( 0, vert_f2 )
 
+		vert_quat = geo.createNode( "attribcreate", node_name = "vert_quat", exact_type_name=True )
+		vert_quat.parm("name").set("orient")
+		vert_quat.parm("class").set(3)
+		vert_quat.parm("size").set(4)
+		vert_quat.parm("value1").setExpression("$VTX*0.1")
+		vert_quat.parm("value2").setExpression("$VTX*0.2")
+		vert_quat.parm("value3").setExpression("$VTX*0.3")
+		vert_quat.parm("value4").setExpression("$VTX*0.4")
+		vert_quat.setInput( 0, vert_f3 )
+
+		vert_quat2 = geo.createNode( "attribcreate", node_name = "vert_quat2", exact_type_name=True )
+		vert_quat2.parm("name").set("quat_2")
+		vert_quat2.parm("class").set(3)
+		vert_quat2.parm("size").set(4)
+		vert_quat2.parm("typeinfo").set(6)  # set type info to quaternion
+		vert_quat2.parm("value1").setExpression("$VTX*0.2")
+		vert_quat2.parm("value2").setExpression("$VTX*0.4")
+		vert_quat2.parm("value3").setExpression("$VTX*0.6")
+		vert_quat2.parm("value4").setExpression("$VTX*0.8")
+		vert_quat2.setInput( 0, vert_quat )
+
+		vert_m44create = geo.createNode( "attribcreate", node_name = "vert_m44create", exact_type_name=True )
+		vert_m44create.parm("name").set("m44")
+		vert_m44create.parm("class").set(3)
+		vert_m44create.parm("size").set(16)
+		vert_m44create.parm("typeinfo").set(7)  # set type info to transformation matrix
+		vert_m44create.setInput( 0, vert_quat2 )
+
+		vert_m44 = geo.createNode( "attribwrangle", node_name = "vert_m44", exact_type_name=True )
+		vert_m44.parm("snippet").set("4@m44 = maketransform(0,0,{ 10, 20, 30 },{ 30, 45, 60},{ 3, 4, 5 },{ 0, 0, 0 });")
+		vert_m44.parm("class").set(3)
+		vert_m44.setInput( 0, vert_m44create )
+
+		vert_m33create = geo.createNode( "attribcreate", node_name = "vert_m33create", exact_type_name=True )
+		vert_m33create.parm("name").set("m33")
+		vert_m33create.parm("class").set(3)
+		vert_m33create.parm("size").set(9)
+		vert_m33create.setInput( 0, vert_m44 )
+
+		vert_m33 = geo.createNode( "attribwrangle", node_name = "vert_m33", exact_type_name=True )
+		vert_m33.parm("snippet").set("3@m33 = matrix3(maketransform(0,0,{ 0, 0, 0 },{ 30, 45, 60},{ 3, 4, 5 },{ 0, 0, 0 }));")
+		vert_m33.parm("class").set(3)
+		vert_m33.setInput( 0, vert_m33create )
+
 		vert_i1 = geo.createNode( "attribcreate", node_name = "vert_i1", exact_type_name=True )
 		vert_i1.parm("name").set("vert_i1")
 		vert_i1.parm("class").set(3)
 		vert_i1.parm("type").set(1)
 		vert_i1.parm("value1").setExpression("$VTX*0.1")
-		vert_i1.setInput( 0, vert_f3 )
+		vert_i1.setInput( 0, vert_m33 )
 
 		vert_i2 = geo.createNode( "attribcreate", node_name = "vert_i2", exact_type_name=True )
 		vert_i2.parm("name").set("vert_i2")
@@ -346,8 +394,27 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		vertString.parm("name").set("vertString")
 		vertString.parm("class").set(3)
 		vertString.parm("type").set(3)
-		vertString.parm("string").set("string $VTX!")
+		vertString.parm("string").setExpression("'string %06d!' % pwd().curPoint().number()", hou.exprLanguage.Python)
 		vertString.setInput( 0, vert_v3f )
+
+
+		vertString2 = geo.createNode( "attribcreate", node_name = "vertString2", exact_type_name=True )
+		vertString2.parm("name").set("vertString2")
+		vertString2.parm("class").set(3)
+		vertString2.parm("type").set(3)
+		vertString2.parm("string").setExpression("vals = [ 'd','c','e','a','g','f','b' ]\nreturn vals[ pwd().curPoint().number() % 7 ]", hou.exprLanguage.Python)
+		vertString2.setInput( 0, vertString )
+
+		vert_iList = geo.createNode( "attribwrangle", node_name = "vert_iList", exact_type_name=True )
+		vert_iList.parm("snippet").set("int i[];\ni[]@vert_iList = i;")
+		vert_iList.parm("class").set(3)
+		vert_iList.setInput( 0, vertString2 )
+
+		vert_fList = geo.createNode( "attribwrangle", node_name = "vert_fList", exact_type_name=True )
+		vert_fList.parm("snippet").set("float f[];\nf[]@vert_fList = f;")
+		vert_fList.parm("class").set(3)
+		vert_fList.setInput( 0, vert_iList )
+
 
 		detail_i3 = geo.createNode( "attribcreate", node_name = "detail_i3", exact_type_name=True )
 		detail_i3.parm("name").set("detail_i3")
@@ -357,10 +424,42 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		detail_i3.parm("value1").set(123)
 		detail_i3.parm("value2").set(456.789) # can we catch it out with a float?
 		detail_i3.parm("value3").set(789)
-		detail_i3.setInput( 0, vertString )
+		detail_i3.setInput( 0, vert_fList )
+
+		detail_m33create = geo.createNode( "attribcreate", node_name = "detail_m33create", exact_type_name=True )
+		detail_m33create.parm("name").set("detail_m33")
+		detail_m33create.parm("class").set(0)
+		detail_m33create.parm("size").set(9)
+		detail_m33create.setInput( 0, detail_i3 )
+
+		detail_m33 = geo.createNode( "attribwrangle", node_name = "detail_m33", exact_type_name=True )
+		detail_m33.parm("snippet").set("3@detail_m33 = matrix3( maketransform(0,0,{ 10, 20, 30 },{ 30, 45, 60},{ 3, 4, 5 },{ 0, 0, 0 }) );")
+		detail_m33.parm("class").set(0)
+		detail_m33.setInput( 0, detail_m33create )
+
+		detail_m44create = geo.createNode( "attribcreate", node_name = "detail_m44create", exact_type_name=True )
+		detail_m44create.parm("name").set("detail_m44")
+		detail_m44create.parm("class").set(0)
+		detail_m44create.parm("size").set(16)
+		detail_m44create.setInput( 0, detail_m33 )
+
+		detail_m44 = geo.createNode( "attribwrangle", node_name = "detail_m44", exact_type_name=True )
+		detail_m44.parm("snippet").set("4@detail_m44 = maketransform(0,0,{ 10, 20, 30 },{ 30, 45, 60},{ 3, 4, 5 },{ 0, 0, 0 });")
+		detail_m44.parm("class").set(0)
+		detail_m44.setInput( 0, detail_m44create )
+		
+		detail_iList = geo.createNode( "attribwrangle", node_name = "detail_iList", exact_type_name=True )
+		detail_iList.parm("snippet").set("int i[];\ni[]@detail_iList = i;")
+		detail_iList.parm("class").set(0)
+		detail_iList.setInput( 0, detail_m44 )
+
+		detail_fList = geo.createNode( "attribwrangle", node_name = "detail_fList", exact_type_name=True )
+		detail_fList.parm("snippet").set("float f[];\nf[]@detail_fList = f;")
+		detail_fList.parm("class").set(0)
+		detail_fList.setInput( 0, detail_iList )
 
 		out = geo.createNode( "null", node_name="OUT" )
-		out.setInput( 0, detail_i3 )
+		out.setInput( 0, detail_fList )
 
 		# convert it all
 		converter = IECoreHoudini.FromHoudiniPointsConverter( out )
@@ -376,6 +475,12 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		for i in range( result.numPoints ) :
 			self.assert_( result["P"].data[i].x >= bbox.min.x )
 			self.assert_( result["P"].data[i].x <= bbox.max.x )
+		
+		# integer and float list attributes are not currently supported, so should not appear in the primitive variable lists:
+		self.assertTrue( "vert_iList" not in result.keys() )
+		self.assertTrue( "vert_fList" not in result.keys() )
+		self.assertTrue( "detail_iList" not in result.keys() )
+		self.assertTrue( "detail_fList" not in result.keys() )
 		
 		# test point attributes
 		self.assert_( "P" in result )
@@ -409,7 +514,7 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 				self.assert_( result["Cs"].data[i][j] <= 1.0 )
 
 		# test vertex attributes
-		attrs = [ "vert_f1", "vert_f2", "vert_f3", "vert_i1", "vert_i2", "vert_i3", "vert_v3f", "vertStringIndices" ]
+		attrs = [ "vert_f1", "vert_f2", "vert_f3", "orient", "quat_2", "vert_i1", "vert_i2", "vert_i3", "vert_v3f", "vertStringIndices" ]
 		for a in attrs :
 			self.assert_( a in result )
 			self.assertEqual( result[a].interpolation, IECore.PrimitiveVariable.Interpolation.Vertex )
@@ -418,12 +523,23 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		self.assertEqual( result["vert_f1"].data.typeId(), IECore.FloatVectorData.staticTypeId() )
 		self.assertEqual( result["vert_f2"].data.typeId(), IECore.V2fVectorData.staticTypeId() )
 		self.assertEqual( result["vert_f3"].data.typeId(), IECore.V3fVectorData.staticTypeId() )
+		self.assertEqual( result["orient"].data.typeId(), IECore.QuatfVectorData.staticTypeId() )
 		
 		for i in range( 0, result.variableSize( IECore.PrimitiveVariable.Interpolation.Vertex ) ) :
 			for j in range( 0, 3 ) :
 				self.assert_( result["vert_f3"].data[i][j] >= 0.0 )
 				self.assert_( result["vert_f3"].data[i][j] < 400.1 )
-		
+
+			self.assertAlmostEqual( result["orient"].data[i][0], i * 0.4,5 )
+			self.assertAlmostEqual( result["orient"].data[i][1], i * 0.1,5 )
+			self.assertAlmostEqual( result["orient"].data[i][2], i * 0.2,5 )
+			self.assertAlmostEqual( result["orient"].data[i][3], i * 0.3,5 )
+
+			self.assertAlmostEqual( result["quat_2"].data[i][0], i * 0.8,5 )
+			self.assertAlmostEqual( result["quat_2"].data[i][1], i * 0.2,5 )
+			self.assertAlmostEqual( result["quat_2"].data[i][2], i * 0.4,5 )
+			self.assertAlmostEqual( result["quat_2"].data[i][3], i * 0.6,5 )
+
 		self.assertEqual( result["vert_i1"].data.typeId(), IECore.IntVectorData.staticTypeId() )
 		self.assertEqual( result["vert_i2"].data.typeId(), IECore.V2iVectorData.staticTypeId() )
 		self.assertEqual( result["vert_i3"].data.typeId(), IECore.V3iVectorData.staticTypeId() )
@@ -439,11 +555,69 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		self.assertEqual( result["vertStringIndices"].data.typeId(), IECore.TypeId.IntVectorData )
 		
 		for i in range( 0, result.variableSize( IECore.PrimitiveVariable.Interpolation.Vertex ) ) :
-			self.assertEqual( result["vertString"].data[i], "string %d!" % i )
+			self.assertEqual( result["vertString"].data[i], "string %06d!" % i )
 			self.assertEqual( result["vertStringIndices"].data[i], i )
+
+		# make sure the string tables are alphabetically sorted:
+		self.assertEqual( result["vertString2"].data, IECore.StringVectorData( ['a','b','c','d','e','f','g'] ) )
+		stringVals = [ 'd','c','e','a','g','f','b' ]
+		for i in range( 0, result.variableSize( IECore.PrimitiveVariable.Interpolation.Vertex ) ) :
+			self.assertEqual( result["vertString2"].data[ result["vertString2Indices"].data[i] ], stringVals[ i % 7 ] )
+		
+		self.assertEqual( result["m44"].interpolation, IECore.PrimitiveVariable.Interpolation.Vertex )
+		self.assertEqual( result["m44"].data.typeId(), IECore.M44fVectorData.staticTypeId() )
+
+		matrixScale = IECore.M44f.extractSHRT( result["m44"].data[0] )[0]
+		matrixRot = IECore.M44f.extractSHRT( result["m44"].data[0] )[2]
+		matrixTranslation = IECore.M44f.extractSHRT( result["m44"].data[0] )[3]
+		self.assertEqual( matrixTranslation, IECore.V3f( 10,20,30 ) )
+		self.assertTrue( matrixRot.equalWithRelError( IECore.V3f( math.pi / 6, math.pi / 4, math.pi / 3 ), 1.e-5 ) )
+		self.assertTrue( matrixScale.equalWithRelError( IECore.V3f( 3, 4, 5 ), 1.e-5 ) )
+				
+		self.assertEqual( result["detail_m44"].interpolation, IECore.PrimitiveVariable.Interpolation.Constant )
+		self.assertEqual( result["detail_m44"].data.typeId(), IECore.M44fData.staticTypeId() )
+
+		matrixScale = IECore.M44f.extractSHRT( result["detail_m44"].data.value )[0]
+		matrixRot = IECore.M44f.extractSHRT( result["detail_m44"].data.value )[2]
+		matrixTranslation = IECore.M44f.extractSHRT( result["detail_m44"].data.value )[3]
+		self.assertEqual( matrixTranslation, IECore.V3f( 10,20,30 ) )
+		self.assertTrue( matrixRot.equalWithRelError( IECore.V3f( math.pi / 6, math.pi / 4, math.pi / 3 ), 1.e-5 ) )
+		self.assertTrue( matrixScale.equalWithRelError( IECore.V3f( 3, 4, 5 ), 1.e-5 ) )
+		
+		self.assertEqual( result["m33"].interpolation, IECore.PrimitiveVariable.Interpolation.Vertex )
+		self.assertEqual( result["m33"].data.typeId(), IECore.M33fVectorData.staticTypeId() )
+
+		m3 = result["m33"].data[0]
+		m4 = IECore.M44f(
+			m3[(0,0)], m3[(0,1)], m3[(0,2)], 0.0,
+			m3[(1,0)], m3[(1,1)], m3[(1,2)], 0.0,
+			m3[(2,0)], m3[(2,1)], m3[(2,2)], 0.0,
+			0.0, 0.0, 0.0, 1.0
+		)
+		
+		matrixScale = IECore.M44f.extractSHRT( m4 )[0]
+		matrixRot = IECore.M44f.extractSHRT( m4 )[2]
+		self.assertTrue( matrixRot.equalWithRelError( IECore.V3f( math.pi / 6, math.pi / 4, math.pi / 3 ), 1.e-5 ) )
+		self.assertTrue( matrixScale.equalWithRelError( IECore.V3f( 3, 4, 5 ), 1.e-5 ) )
+		
+		self.assertEqual( result["detail_m33"].interpolation, IECore.PrimitiveVariable.Interpolation.Constant )
+		self.assertEqual( result["detail_m33"].data.typeId(), IECore.M33fData.staticTypeId() )
+
+		m3 = result["detail_m33"].data.value
+		m4 = IECore.M44f(
+			m3[(0,0)], m3[(0,1)], m3[(0,2)], 0.0,
+			m3[(1,0)], m3[(1,1)], m3[(1,2)], 0.0,
+			m3[(2,0)], m3[(2,1)], m3[(2,2)], 0.0,
+			0.0, 0.0, 0.0, 1.0
+		)
+		
+		matrixScale = IECore.M44f.extractSHRT( m4 )[0]
+		matrixRot = IECore.M44f.extractSHRT( m4 )[2]
+		self.assertTrue( matrixRot.equalWithRelError( IECore.V3f( math.pi / 6, math.pi / 4, math.pi / 3 ), 1.e-5 ) )
+		self.assertTrue( matrixScale.equalWithRelError( IECore.V3f( 3, 4, 5 ), 1.e-5 ) )
 		
 		self.assert_( result.arePrimitiveVariablesValid() )
-	
+
 	# convert some points
 	def testConvertPoints( self ) :
 		points = self.createPoints()
@@ -529,10 +703,10 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		self.assert_( result.arePrimitiveVariablesValid() )
 		
 		attr.parm("type").set( 3 ) # string
-		attr.parm( "string" ).set( "string $PT!" )
+		attr.parm( "string" ).setExpression("'string %06d!' % pwd().curPoint().number()", hou.exprLanguage.Python)
 		result = IECoreHoudini.FromHoudiniPointsConverter( attr ).convert()
 		self.assertEqual( result["test_attribute"].data.typeId(), IECore.TypeId.StringVectorData )
-		self.assertEqual( result["test_attribute"].data[10], "string 10!" )
+		self.assertEqual( result["test_attribute"].data[10], "string 000010!" )
 		self.assertEqual( result["test_attribute"].data.size(), 5000 )
 		self.assertEqual( result["test_attribute"].interpolation, IECore.PrimitiveVariable.Interpolation.Constant )
 		self.assertEqual( result["test_attributeIndices"].data.typeId(), IECore.TypeId.IntVectorData )
@@ -829,7 +1003,10 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		
 		converter = IECoreHoudini.FromHoudiniPointsConverter( scale )
 		result = converter.convert()
-		self.assertEqual( result.keys(), [ "Cs", "N", "P", "Pref", "varmap", "width" ] )
+		if hou.applicationVersion()[0] >= 15 :
+			self.assertEqual( result.keys(), [ "Cs", "N", "P", "Pref", "width" ] )
+		else :
+			self.assertEqual( result.keys(), [ "Cs", "N", "P", "Pref", "varmap", "width" ] )
 		self.assertTrue( result.arePrimitiveVariablesValid() )
 		self.assertEqual( result["P"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
 		self.assertEqual( result["Pref"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
@@ -837,11 +1014,14 @@ class TestFromHoudiniPointsConverter( IECoreHoudini.TestCase ) :
 		
 		converter["convertStandardAttributes"].setTypedValue( False )
 		result = converter.convert()
-		self.assertEqual( result.keys(), [ "Cd", "N", "P", "pscale", "rest", "varmap" ] )
+		if hou.applicationVersion()[0] >= 15 :
+			self.assertEqual( result.keys(), [ "Cd", "N", "P", "pscale", "rest" ] )
+		else :
+			self.assertEqual( result.keys(), [ "Cd", "N", "P", "pscale", "rest", "varmap" ] )
 		self.assertTrue( result.arePrimitiveVariablesValid() )
 		self.assertEqual( result["P"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
 		self.assertEqual( result["rest"].data.getInterpretation(), IECore.GeometricData.Interpretation.Point )
 		self.assertEqual( result["N"].data.getInterpretation(), IECore.GeometricData.Interpretation.Normal )
 
 if __name__ == "__main__":
-    unittest.main()
+	unittest.main()

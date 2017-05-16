@@ -66,6 +66,7 @@ class ThreadingTest( unittest.TestCase ) :
 
 				t.join()
 
+	@unittest.skipIf( "TRAVIS" in os.environ, "Low hardware concurrency on Travis" )
 	def testThreadedOpGains( self ) :
 	
 		## Checks that we actually get a speedup by running a bunch of slow
@@ -137,6 +138,7 @@ class ThreadingTest( unittest.TestCase ) :
 
 		self.callSomeThings( ops, kwArgs=kwArgs, threaded=True, iterations=5 )
 
+	@unittest.skipIf( "TRAVIS" in os.environ, "Low hardware concurrency on Travis" )
 	def testReadingGains( self ) :
 	
 		## Checks that we can use a bunch of readers in different threads and
@@ -164,6 +166,7 @@ class ThreadingTest( unittest.TestCase ) :
 				
 		self.failUnless( threadedTime < nonThreadedTime ) # this could plausibly fail due to varying load on the machine / io but generally shouldn't
 
+	@unittest.skipIf( "TRAVIS" in os.environ, "Low hardware concurrency on Travis" )
 	def testWritingGains( self ) :
 	
 		image = IECore.Reader.create( "test/IECore/data/jpg/21mm.jpg" ).read()
@@ -208,6 +211,7 @@ class ThreadingTest( unittest.TestCase ) :
 			cachedReader.clear()
 			self.callSomeThings( calls, args=args, threaded=True )
 
+	@unittest.skipIf( "TRAVIS" in os.environ, "Low hardware concurrency on Travis" )
 	def testCachedReaderGains( self ) :
 	
 		args = [

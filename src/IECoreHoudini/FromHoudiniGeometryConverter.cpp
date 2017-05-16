@@ -3,7 +3,7 @@
 //  Copyright 2010 Dr D Studios Pty Limited (ACN 127 184 954) (Dr. D Studios),
 //  its affiliates and/or its licensors.
 //
-//  Copyright (c) 2010-2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2010-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -39,6 +39,7 @@
 
 #include "CH/CH_Manager.h"
 #include "UT/UT_StringMMPattern.h"
+#include "UT/UT_Version.h"
 #include "UT/UT_WorkArgs.h"
 
 #include "IECore/CompoundObject.h"
@@ -141,7 +142,8 @@ void FromHoudiniGeometryConverter::remapAttributes( const GU_Detail *geo, Attrib
 		// split up our rixlate string
 		UT_WorkArgs workArgs;
 		std::vector<std::string> tokens;
-		remapStrings( i ).tokenize( workArgs, ":" );
+		UT_String remapString( remapStrings( i ) );
+		remapString.tokenize( workArgs, ":" );
 		workArgs.toStringVector( tokens );
 
 		// not enough elements!
@@ -228,6 +230,9 @@ void FromHoudiniGeometryConverter::transferAttribs(
 	PrimitiveVariable::Interpolation detailInterpolation
 ) const
 {
+
+#if UT_MAJOR_VERSION_INT < 15
+
 	// add position (this can't be done as a regular attrib because it would be V4fVectorData)
 	GA_Range pointRange = geo->getPointRange();
 	std::vector<Imath::V3f> pData( pointRange.getEntries() );
@@ -238,6 +243,8 @@ void FromHoudiniGeometryConverter::transferAttribs(
 
 	result->variables["P"] = PrimitiveVariable( PrimitiveVariable::Vertex, new V3fVectorData( pData, GeometricData::Point ) );
 	
+#endif
+
 	// get RI remapping information from the detail
 	AttributeMap pointAttributeMap;
 	AttributeMap primitiveAttributeMap;
@@ -349,9 +356,9 @@ void FromHoudiniGeometryConverter::transferElementAttribs( const GU_Detail *geo,
 		}
 		
 		// check for remapping information for this attribute
-		if ( attributeMap.count( attr->getName() ) == 1 )
+		if ( attributeMap.count( name.buffer() ) == 1 )
 		{
-			std::vector<RemapInfo> &map = attributeMap[attr->getName()];
+			std::vector<RemapInfo> &map = attributeMap[name.buffer()];
 			for ( std::vector<RemapInfo>::iterator rIt=map.begin(); rIt != map.end(); ++rIt )
 			{
 				transferAttribData( result, interpolation, attrRef, range, &*rIt );
@@ -387,6 +394,11 @@ void FromHoudiniGeometryConverter::transferAttribData(
 	{
 		case GA_STORECLASS_FLOAT :
 		{
+			if( !attr->getAIFTuple() )
+			{
+				// not supporting variable lists
+				return;
+			}
 			switch ( attr->getTupleSize() )
 			{
 				case 1 :
@@ -439,6 +451,18 @@ void FromHoudiniGeometryConverter::transferAttribData(
 								default :
 								{
 									dataPtr = extractData<V3fVectorData>( attr, range );
+
+#if UT_MAJOR_VERSION_INT >= 15
+
+									// special case for rest/Pref since Houdini considers rest Numeric
+									// but Cortex is expecting it to be Point.
+									if ( attr->getName().equal( "rest" ) || attr->getName().equal( "Pref" ) )
+									{
+										V3fVectorData *restData = IECore::runTimeCast<V3fVectorData>( dataPtr.get() );
+										restData->setInterpretation( IECore::GeometricData::Point );
+									}
+
+#endif
 									break;
 								}
 
@@ -446,6 +470,24 @@ void FromHoudiniGeometryConverter::transferAttribData(
 							break;
 						}
 					}
+					break;
+				}
+				case 4 :
+				{
+					if( attr->getTypeInfo() == GA_TYPE_QUATERNION || ( !strcmp( attr->getName(), "orient" ) && attr->getTypeInfo() == GA_TYPE_VOID ) )
+					{
+						dataPtr = extractData<QuatfVectorData>( attr, range, elementIndex );
+					}
+					break;
+				}
+				case 9 :
+				{
+					dataPtr = extractData<M33fVectorData>( attr, range, elementIndex );
+					break;
+				}
+				case 16 :
+				{
+					dataPtr = extractData<M44fVectorData>( attr, range, elementIndex );
 					break;
 				}
 				default :
@@ -457,6 +499,11 @@ void FromHoudiniGeometryConverter::transferAttribData(
 		}
 		case GA_STORECLASS_INT :
  		{
+			if( !attr->getAIFTuple() )
+			{
+				// not supporting variable lists
+				return;
+			}
 			switch ( attr->getTupleSize() )
 			{
 				case 1 :
@@ -558,7 +605,12 @@ void FromHoudiniGeometryConverter::transferDetailAttribs( const GU_Detail *geo, 
 		switch ( attrRef.getStorageClass() )
 		{
 			case GA_STORECLASS_FLOAT :
-			{
+			{	
+				if( !attr->getAIFTuple() )
+				{
+					// not supporting variable lists
+					continue;
+				}
 				switch ( attr->getTupleSize() )
 				{
 					case 1 :
@@ -589,6 +641,16 @@ void FromHoudiniGeometryConverter::transferDetailAttribs( const GU_Detail *geo, 
 						}
 						break;
 					}
+					case 9:
+					{
+						dataPtr = extractData<M33fData>( attr );
+						break;
+					}
+					case 16:
+					{
+						dataPtr = extractData<M44fData>( attr );
+						break;
+					}
 					default :
 					{
 						break;
@@ -598,6 +660,11 @@ void FromHoudiniGeometryConverter::transferDetailAttribs( const GU_Detail *geo, 
 			}
 			case GA_STORECLASS_INT :
  			{
+				if( !attr->getAIFTuple() )
+				{
+					// not supporting variable lists
+					continue;
+				}
 				switch ( attr->getTupleSize() )
 				{
 					case 1 :
@@ -644,13 +711,13 @@ DataPtr FromHoudiniGeometryConverter::extractStringVectorData( const GA_Attribut
 {
 	StringVectorDataPtr data = new StringVectorData();
 	
-	std::vector<std::string> &dest = data->writable();
 	
 	size_t numStrings = 0;
+	std::vector<std::string> strings;
 	const GA_AIFSharedStringTuple *tuple = attr->getAIFSharedStringTuple();
 	for ( GA_AIFSharedStringTuple::iterator it=tuple->begin( attr ); !it.atEnd(); ++it )
 	{
-		dest.push_back( it.getString() );
+		strings.push_back( it.getString() );
 		numStrings++;
 	}
 	
@@ -678,7 +745,7 @@ DataPtr FromHoudiniGeometryConverter::extractStringVectorData( const GA_Attribut
 		{
 			if ( !adjustedDefault )
 			{
-				dest.push_back( "" );
+				strings.push_back( "" );
 				adjustedDefault = true;
 			}
 			
@@ -689,7 +756,54 @@ DataPtr FromHoudiniGeometryConverter::extractStringVectorData( const GA_Attribut
 			indices[i] = adjustedHandles[index];
 		}
 	}
-	
+
+	// The order of "strings" is not guaranteed, and can be unstable
+	// from frame to frame in certain situations, so we sort them
+	// alphabetically and update the indices accordingly:
+
+	// find a permutation that orders strings alphabetically:
+	std::vector<int> alphabeticalOrdering;
+	for( size_t i=0; i < strings.size(); ++i )
+	{
+		alphabeticalOrdering.push_back( i );
+	}
+	struct Comparator
+	{
+		Comparator( const std::vector<std::string> &s ) : strings( s )
+		{
+		}
+
+		const std::vector<std::string> &strings;
+		bool operator()( int a, int b )
+		{
+			return strings[a] < strings[b];
+		}
+	};
+	std::sort(
+		alphabeticalOrdering.begin(),
+		alphabeticalOrdering.end(),
+		Comparator(strings)
+	);
+
+	// find inverse:
+	std::vector<int> inverseAlphabeticalOrdering( strings.size() );
+	for( size_t i=0; i < alphabeticalOrdering.size(); ++i )
+	{
+		inverseAlphabeticalOrdering[ alphabeticalOrdering[i] ] = i;
+	}
+
+	// apply permutation:
+	for( size_t i=0; i < indexData->readable().size(); ++i )
+	{
+		indices[i] = inverseAlphabeticalOrdering[ indices[i] ];
+	}
+	std::vector<std::string> &dest = data->writable();
+	dest.resize( alphabeticalOrdering.size() );
+	for( size_t i=0; i < alphabeticalOrdering.size(); ++i )
+	{
+		dest[ i ] = strings[ alphabeticalOrdering[i] ];
+	}
+
 	return data;
 }
 
@@ -761,6 +875,33 @@ GU_DetailHandle FromHoudiniGeometryConverter::extract( const GU_Detail *geo, con
 	}
 	
 	return GU_DetailHandle();
+}
+
+template <>
+IECore::QuatfVectorDataPtr FromHoudiniGeometryConverter::extractData<IECore::QuatfVectorData>( const GA_Attribute *attr, const GA_Range &range, int elementIndex ) const
+{
+	QuatfVectorDataPtr data = new QuatfVectorData;
+	data->writable().resize( range.getEntries() );
+	QuatfVectorData::BaseType *dest = data->baseWritable();
+
+	if ( elementIndex == -1 )
+	{
+		attr->getAIFTuple()->getRange( attr, range, dest );
+	}
+	else
+	{
+		attr->getAIFTuple()->getRange( attr, range, dest, elementIndex, 1 );
+	}
+
+	// rearrange quaternion components: houdini stores them as "i,j,k,s", Imath
+	// stores them as "s,i,j,k":
+	for( std::vector<Imath::Quatf>::iterator it = data->writable().begin(); it != data->writable().end(); ++it )
+	{
+		*it = Imath::Quatf( (*it)[3], (*it)[0], (*it)[1], (*it)[2] );
+	}
+
+	return data;
+	
 }
 
 /////////////////////////////////////////////////////////////////////////////////

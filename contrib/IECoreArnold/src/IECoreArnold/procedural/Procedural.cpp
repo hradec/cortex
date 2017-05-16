@@ -69,20 +69,19 @@ static void initialisePython()
 			g_mainModule = object( handle<>( borrowed( PyImport_AddModule( "__main__" ) ) ) );
 			g_mainModuleNamespace = g_mainModule.attr( "__dict__" );
 
-			// set the dlopen flags to include RTLD_GLOBAL to avoid the dreaded
-			// cross module rtti errors on linux, and get rid of the python signal handler that
-			// turns Ctrl-C into that annoying KeyboardInterrupt exception.
-			string toExecute =	"import sys\n"
-								"import ctypes\n"
-								"sys.setdlopenflags( sys.getdlopenflags() | ctypes.RTLD_GLOBAL )\n"
-								"import signal\n"
-								"signal.signal( signal.SIGINT, signal.SIG_DFL )\n"
-								"import IECore";
+			// Get rid of the python signal handler that
+			// turns Ctrl-C into that annoying KeyboardInterrupt
+			// exception, and import IECore ready for use in
+			// procInit().
+			string toExecute =
+				"import signal\n"
+				"signal.signal( signal.SIGINT, signal.SIG_DFL )\n"
+				"import IECore";
 
-			handle<> ignored( PyRun_String( 
+			handle<> ignored( PyRun_String(
 				toExecute.c_str(),
 				Py_file_input, g_mainModuleNamespace.ptr(),
-				g_mainModuleNamespace.ptr() ) );					
+				g_mainModuleNamespace.ptr() ) );
 		}
 		catch( const error_already_set &e )
 		{
@@ -99,7 +98,7 @@ static void initialisePython()
 
 	PyEval_ReleaseThread( PyThreadState_Get() );
 }
-	
+
 static int procInit( AtNode *node, void **userPtr )
 {
 	// load the class
@@ -109,7 +108,7 @@ static int procInit( AtNode *node, void **userPtr )
 	const char *className = AiNodeGetStr( node, "className" );
 	int classVersion = AiNodeGetInt( node, "classVersion" );
 	AtArray *parameterValues = AiNodeGetArray( node, "parameterValues" );
-	
+
 	ParameterisedProceduralPtr parameterisedProcedural = 0;
 	ScopedGILLock gilLock;
 	try
@@ -117,12 +116,12 @@ static int procInit( AtNode *node, void **userPtr )
 		object ieCore = g_mainModuleNamespace["IECore"];
 		object classLoader = ieCore.attr( "ClassLoader" ).attr( "defaultProceduralLoader" )();
 		object procedural = classLoader.attr( "load" )( className, classVersion )();
-		
+
 		if( parameterValues )
 		{
 			boost::python::list toParse;
 			for( unsigned i=0; i<parameterValues->nelements; i++ )
-			{			
+			{
 				// hack to workaround ass parsing errors
 				/// \todo Remove when we get the Arnold version that fixes this
 				std::string s = AiArrayGetStr( parameterValues, i );
@@ -133,14 +132,14 @@ static int procInit( AtNode *node, void **userPtr )
 						s[c] = '#';
 					}
 				}
-					
+
 				toParse.append( s );
 			}
-		
+
 			object parameterParser = ieCore.attr( "ParameterParser" )();
 			parameterParser.attr( "parse" )( toParse, procedural.attr( "parameters" )() );
 		}
-		
+
 		parameterisedProcedural = extract<ParameterisedProceduralPtr>( procedural );
 	}
 	catch( const error_already_set &e )
@@ -155,14 +154,14 @@ static int procInit( AtNode *node, void **userPtr )
 	{
 		msg( Msg::Error, "ieProcedural", "Caught unknown exception" );
 	}
-	
+
 	// render with it
-	
+
 	if( parameterisedProcedural )
 	{
 		IECoreArnold::RendererPtr renderer = new IECoreArnold::Renderer( node );
 		parameterisedProcedural->render( renderer.get() );
-			
+
 		renderer->addRef();
 		*userPtr = renderer.get();
 	}
@@ -170,7 +169,7 @@ static int procInit( AtNode *node, void **userPtr )
 	{
 		*userPtr = 0;
 	}
-	
+
 	return 1;
 }
 
@@ -205,6 +204,6 @@ AI_EXPORT_LIB int ProcLoader( AtProcVtable *vTable )
 	vTable->NumNodes = procNumNodes;
 	vTable->GetNode = procGetNode;
 	strcpy( vTable->version, AI_VERSION );
-	
+
 	return 1;
 }

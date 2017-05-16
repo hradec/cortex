@@ -35,6 +35,7 @@
 #include "OP/OP_NodeInfoParms.h"
 #include "PRM/PRM_ChoiceList.h"
 #include "PRM/PRM_Default.h"
+#include "UT/UT_Interrupt.h"
 #include "UT/UT_StringMMPattern.h"
 #include "UT/UT_WorkArgs.h"
 
@@ -47,7 +48,7 @@
 #include "IECore/TypeTraits.h"
 #include "IECore/VisibleRenderable.h"
 
-#include "IECoreHoudini/GU_CortexPrimitive.h"
+#include "IECoreHoudini/GEO_CortexPrimitive.h"
 #include "IECoreHoudini/SOP_SceneCacheSource.h"
 #include "IECoreHoudini/ToHoudiniAttribConverter.h"
 #include "IECoreHoudini/ToHoudiniCortexObjectConverter.h"
@@ -193,7 +194,7 @@ OP_ERROR SOP_SceneCacheSource::cookMySop( OP_Context &context )
 	
 	UT_String attributeCopy;
 	getAttributeCopy( attributeCopy );
-	
+
 	UT_String fullPathName;
 	getFullPathName( fullPathName );
 	
@@ -210,6 +211,7 @@ OP_ERROR SOP_SceneCacheSource::cookMySop( OP_Context &context )
 	hash.append( path );
 	hash.append( space );
 	hash.append( tagFilterStr );
+	hash.append( getTagGroups() );
 	hash.append( shapeFilterStr );
 	hash.append( attributeFilter );
 	hash.append( attributeCopy );
@@ -243,6 +245,7 @@ OP_ERROR SOP_SceneCacheSource::cookMySop( OP_Context &context )
 	params.attributeCopy = attributeCopy.toStdString();
 	params.fullPathName = fullPathName.toStdString();
 	params.geometryType = getGeometryType();
+	params.tagGroups = getTagGroups();
 	getShapeFilter( params.shapeFilter );
 	getTagFilter( params.tagFilter );
 	
@@ -553,6 +556,12 @@ bool SOP_SceneCacheSource::convertObject( const IECore::Object *object, const st
 		return false;
 	}
 	
+	// we need to set the name regardless of whether
+	// we're reusing prims or doing the full conversion
+	// because this parameter can have an affect in
+	// transferAttribs() as well as convert()
+	converter->nameParameter()->setTypedValue( name );
+	
 	// check the primitve range map to see if this shape exists already
 	std::map<std::string, GA_Range>::iterator rIt = params.namedRanges.find( name );
 	if ( rIt != params.namedRanges.end() && !rIt->second.isEmpty() )
@@ -602,7 +611,6 @@ bool SOP_SceneCacheSource::convertObject( const IECore::Object *object, const st
 	}
 	
 	// fallback to full conversion
-	converter->nameParameter()->setTypedValue( name );
 	converter->attributeFilterParameter()->setTypedValue( params.attributeFilter );
 	
 	try
@@ -611,11 +619,12 @@ bool SOP_SceneCacheSource::convertObject( const IECore::Object *object, const st
 		
 		bool status = converter->convert( myGdpHandle );
 		
+		// adds the full path in addition to the relative name
+		const GA_IndexMap &primMap = gdp->getPrimitiveMap();
+		GA_Range newPrims( primMap, firstNewPrim, primMap.lastOffset() + 1 );
+
 		if ( params.fullPathName != "" )
 		{
-			// adds the full path in addition to the relative name
-			const GA_IndexMap &primMap = gdp->getPrimitiveMap();
-			GA_Range newPrims( primMap, firstNewPrim, primMap.lastOffset() + 1 );
 			if ( newPrims.isValid() )
 			{
 				std::string fullName;
@@ -628,6 +637,41 @@ bool SOP_SceneCacheSource::convertObject( const IECore::Object *object, const st
 			}
 		}
 		
+		if ( params.tagGroups )
+		{
+			static UT_StringMMPattern convertTagFilter;
+			if( convertTagFilter.isEmpty() )
+			{
+				convertTagFilter.compile( "ObjectType:*" );
+			}
+			SceneInterface::NameList tags;
+			scene->readTags( tags, IECore::SceneInterface::LocalTag );
+			for ( SceneInterface::NameList::const_iterator it=tags.begin(); it != tags.end(); ++it )
+			{
+				UT_String tag( *it );
+				if ( tag.multiMatch( params.tagFilter ) )
+				{
+					// skip this tag because it's used behind the scenes
+					if ( tag.multiMatch( convertTagFilter ) )
+					{
+						continue;
+					}
+
+					// replace this special character found in SCC tags that will prevent the group from being created
+					tag.substitute(":", "_");
+
+					tag.prepend("ieTag_");
+
+					GA_PrimitiveGroup *group = gdp->findPrimitiveGroup(tag);
+					if ( !group )
+					{
+						group = gdp->newPrimitiveGroup(tag);
+					}
+					group->addRange(newPrims);
+				}
+			}
+		}
+
 		return status;
 	}
 	catch ( std::exception &e )
@@ -650,7 +694,7 @@ void SOP_SceneCacheSource::getNodeSpecificInfoText( OP_Context &context, OP_Node
 	GeometryType geometryType = (GeometryType)this->evalInt( pGeometryType.getToken(), 0, 0 );
 	if ( geometryType == Cortex )
 	{
-		GU_CortexPrimitive::infoText( getCookedGeo( context ), context, parms );
+		GEO_CortexPrimitive::infoText( getCookedGeo( context ), context, parms );
 		return;
 	}
 	

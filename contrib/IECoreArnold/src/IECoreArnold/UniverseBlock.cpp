@@ -34,34 +34,133 @@
 
 #include "ai.h"
 
+#include "tbb/spin_mutex.h"
+
+#include "boost/tokenizer.hpp"
+#include "boost/filesystem/operations.hpp"
+
+#include "IECore/ClassData.h"
+#include "IECore/Exception.h"
+#include "IECore/MessageHandler.h"
+
 #include "IECoreArnold/UniverseBlock.h"
 
+using namespace IECore;
 using namespace IECoreArnold;
 
-static int g_count = 0;
+namespace
+{
+
+void loadMetadata( const std::string &pluginPaths )
+{
+	typedef boost::tokenizer<boost::char_separator<char> > Tokenizer;
+	Tokenizer t( pluginPaths, boost::char_separator<char>( ":" ) );
+	for( Tokenizer::const_iterator it = t.begin(), eIt = t.end(); it != eIt; ++it )
+	{
+		try
+		{
+			for( boost::filesystem::recursive_directory_iterator dIt( *it ), deIt; dIt != deIt; ++dIt )
+			{
+				if( dIt->path().extension() == ".mtd" )
+				{
+					if( !AiMetaDataLoadFile( dIt->path().c_str() ) )
+					{
+						throw IECore::Exception( boost::str( boost::format( "Failed to load \"%s\"" ) % dIt->path().string() ) );
+					}
+				}
+			}
+		}
+		catch( const std::exception &e )
+		{
+			IECore::msg( IECore::Msg::Debug, "UniverseBlock", e.what() );
+		}
+	}
+}
+
+void begin()
+{
+	AiBegin();
+
+	const char *pluginPaths = getenv( "ARNOLD_PLUGIN_PATH" );
+	if( pluginPaths )
+	{
+		AiLoadPlugins( pluginPaths );
+		loadMetadata( pluginPaths );
+	}
+}
+
+tbb::spin_mutex g_mutex;
+int g_count = 0;
+bool g_haveWriter = false;
+ClassData<UniverseBlock, bool> g_writable;
+
+} // namespace
 
 UniverseBlock::UniverseBlock()
 {
+	// Deprecated constructor existed before the
+	// writeable concept, so for backwards compatibility
+	// we register as read only.
+	init( /* writable = */ false );
+}
+
+UniverseBlock::UniverseBlock( bool writable )
+{
+	init( writable );
+}
+
+void UniverseBlock::init( bool writable )
+{
+	tbb::spin_mutex::scoped_lock lock( g_mutex );
+
+	if( writable )
+	{
+		if( g_haveWriter )
+		{
+			throw IECore::Exception( "Arnold is already in use" );
+		}
+		else
+		{
+			g_haveWriter = true;
+		}
+	}
+	g_writable.create( this, writable );
+
 	g_count++;
 	if( AiUniverseIsActive() )
 	{
 		return;
 	}
 
-	AiBegin();
-	
-	const char *pluginPaths = getenv( "ARNOLD_PLUGIN_PATH" );
-	if( pluginPaths )
-	{
-		AiLoadPlugins( pluginPaths );
-	}
+	begin();
 }
 
 UniverseBlock::~UniverseBlock()
 {
-	if( --g_count == 0 )
-	{
-		AiEnd();
-	}
-}
+	tbb::spin_mutex::scoped_lock lock( g_mutex );
 
+	g_count--;
+	if( g_writable[this] )
+	{
+		g_haveWriter = false;
+		// We _must_ call AiEnd() to clean up ready
+		// for the next writer, regardless of whether
+		// or not readers still exist.
+		AiEnd();
+		if( g_count )
+		{
+			// If readers do exist, restart the universe.
+			// This is not threadsafe, since a reader on
+			// another thread could be making Ai calls
+			// in between shutdown and startup. But it is
+			// the best we can do given that Arnold has
+			// only one universe. The alternative is to
+			// only shutdown when g_count reaches 0, but
+			// then a long-lived reader can cause Arnold
+			// state to be carried over from one writer
+			// to the next.
+			begin();
+		}
+	}
+	g_writable.erase( this );
+}

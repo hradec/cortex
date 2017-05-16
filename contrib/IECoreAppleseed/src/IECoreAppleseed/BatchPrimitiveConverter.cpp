@@ -43,8 +43,7 @@
 #include "IECore/SimpleTypedData.h"
 
 #include "IECoreAppleseed/private/BatchPrimitiveConverter.h"
-
-#include "IECoreAppleseed/ToAppleseedConverter.h"
+#include "IECoreAppleseed/MeshAlgo.h"
 
 using namespace std;
 using namespace boost;
@@ -90,6 +89,7 @@ void IECoreAppleseed::BatchPrimitiveConverter::setOption( const string &name, Co
 asf::auto_release_ptr<asr::Object> IECoreAppleseed::BatchPrimitiveConverter::doConvertPrimitive( PrimitivePtr primitive, const string &name )
 {
 	MurmurHash primitiveHash;
+	primitiveHash.append( name );
 	primitive->hash( primitiveHash );
 
 	if( primitive->typeId() == MeshPrimitiveTypeId )
@@ -100,17 +100,7 @@ asf::auto_release_ptr<asr::Object> IECoreAppleseed::BatchPrimitiveConverter::doC
 
 		if( !filesystem::exists( p ) )
 		{
-			ToAppleseedConverterPtr converter = ToAppleseedConverter::create( primitive.get() );
-
-			if( !converter )
-			{
-				msg( Msg::Warning, "IECoreAppleseed::BatchPrimitiveConverter", "Couldn't convert primitive." );
-				return asf::auto_release_ptr<asr::Object>();
-			}
-
-			asf::auto_release_ptr<asr::Object> entity;
-			entity.reset( static_cast<asr::Object*>( converter->convert() ) );
-
+			asf::auto_release_ptr<asr::MeshObject> entity( MeshAlgo::convert( primitive.get() ) );
 			if( entity.get() == 0 )
 			{
 				msg( Msg::Warning, "IECoreAppleseed::BatchPrimitiveConverter", "Couldn't convert primitive." );
@@ -119,7 +109,7 @@ asf::auto_release_ptr<asr::Object> IECoreAppleseed::BatchPrimitiveConverter::doC
 
 			// Write the mesh to a file.
 			p = m_projectPath / fileName;
-			if( !asr::MeshObjectWriter::write( static_cast<const asr::MeshObject&>( *entity ), name.c_str(), p.string().c_str() ) )
+			if( !asr::MeshObjectWriter::write( *entity, name.c_str(), p.string().c_str() ) )
 			{
 				msg( Msg::Warning, "IECoreAppleseed::BatchPrimitiveConverter", "Couldn't save mesh primitive." );
 				return asf::auto_release_ptr<asr::Object>();

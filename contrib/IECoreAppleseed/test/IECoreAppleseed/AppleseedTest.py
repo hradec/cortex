@@ -58,7 +58,7 @@ class TestCase( unittest.TestCase ):
 	def _getCamera( self, r ) :
 
 		scn = self._getScene( r )
-		return scn.get_camera()
+		return scn.cameras()[0]
 
 	def _getMainAssembly( self, r ) :
 
@@ -73,3 +73,10 @@ class TestCase( unittest.TestCase ):
 
 		ass = self._getMainAssembly( r )
 		return len( ass.assembly_instances() )
+
+	def _writeProject( self, r, filename ) :
+
+		proj = r.appleseedProject()
+		opts = appleseed.ProjectFileWriterOptions.OmitBringingAssets | appleseed.ProjectFileWriterOptions.OmitWritingGeometryFiles
+		w = appleseed.ProjectFileWriter()
+		w.write( proj, filename, opts )

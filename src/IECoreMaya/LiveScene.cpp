@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2013-2014, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2013-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -38,6 +38,9 @@
 #include "IECore/TransformationMatrixData.h"
 #include "IECore/Primitive.h"
 #include "IECore/NullObject.h"
+#include "IECore/CurvesMergeOp.h"
+#include "IECore/MeshMergeOp.h"
+#include "IECore/MessageHandler.h"
 
 #include "IECoreMaya/LiveScene.h"
 #include "IECoreMaya/FromMayaPlugConverter.h"
@@ -47,6 +50,8 @@
 #include "IECoreMaya/FromMayaCameraConverter.h"
 #include "IECoreMaya/Convert.h"
 #include "IECoreMaya/SceneShape.h"
+#include "IECoreMaya/FromMayaCurveConverter.h"
+#include "IECoreMaya/FromMayaMeshConverter.h"
 
 #include "maya/MFnDagNode.h"
 #include "maya/MFnTransform.h"
@@ -64,16 +69,62 @@
 #include "maya/MPlug.h"
 #include "maya/MTransformationMatrix.h"
 #include "maya/MDagPathArray.h"
+#include "maya/MFnNurbsCurve.h"
+#include "maya/MGlobal.h"
+#include "maya/MFnSet.h"
 
 #include "OpenEXR/ImathBoxAlgo.h"
 
-#include <boost/algorithm/string.hpp>
-#include <boost/tokenizer.hpp>
+#include "boost/algorithm/string.hpp"
+#include "boost/tokenizer.hpp"
+#include "boost/format.hpp"
 
 using namespace IECore;
 using namespace IECoreMaya;
 
 IE_CORE_DEFINERUNTIMETYPED( LiveScene );
+
+namespace
+{
+
+void readExportableSets( std::set<SceneInterface::Name> &exportableSets, const MDagPath &dagPath )
+{
+	// convert maya sets to tags
+	MSelectionList selectionList;
+	selectionList.add( dagPath );
+
+	MObjectArray sets;
+	if( !MGlobal::getAssociatedSets( selectionList, sets ) )
+	{
+		return;
+	}
+
+	for( unsigned int i = 0, numSets = sets.length(); i < numSets; ++i )
+	{
+		MStatus s;
+		MFnSet set( sets[i], &s );
+
+		if( !s )
+		{
+			continue;
+		}
+
+		MPlug exportPlug = set.findPlug( "ieExport", false, &s );
+
+		if( !s )
+		{
+			continue;
+		}
+
+		if( exportPlug.asBool() )
+		{
+			exportableSets.insert( SceneInterface::Name( set.name().asChar() ) );
+		}
+
+	}
+}
+
+}
 
 // this stuff requires a mutex, as all them maya DG functions aint thread safe!
 LiveScene::Mutex LiveScene::s_mutex;
@@ -256,6 +307,14 @@ bool LiveScene::hasAttribute( const Name &name ) const
 	std::vector< CustomAttributeReader > &attributeReaders = customAttributeReaders();
 	for ( std::vector< CustomAttributeReader >::const_iterator it = attributeReaders.begin(); it != attributeReaders.end(); ++it )
 	{
+		if ( it->m_mightHave )
+		{
+			if ( ! it->m_mightHave( m_dagPath, name ) )
+			{
+				continue;
+			}
+		}
+
 		NameList names;
 		{
 			// call it->m_names under a mutex, as it could be reading plug values,
@@ -440,7 +499,15 @@ bool LiveScene::hasTag( const Name &name, int filter ) const
 	{
 		throw Exception( "IECoreMaya::LiveScene::hasTag: Dag path no longer exists!" );
 	}
-	
+
+	std::set<Name> sets;
+	readExportableSets(sets, m_dagPath);
+
+	if( sets.find( name ) != sets.end() )
+	{
+		return true;
+	}
+
 	std::vector<CustomTagReader> &tagReaders = customTagReaders();
 	for ( std::vector<CustomTagReader>::const_iterator it = tagReaders.begin(); it != tagReaders.end(); ++it )
 	{
@@ -466,8 +533,9 @@ void LiveScene::readTags( NameList &tags, int filter ) const
 	{
 		throw Exception( "IECoreMaya::LiveScene::attributeNames: Dag path no longer exists!" );
 	}
-	
+
 	std::set<Name> uniqueTags;
+	readExportableSets(uniqueTags, m_dagPath);
 
 	// read tags from ieTags attribute:
 	MStatus st;
@@ -504,6 +572,208 @@ void LiveScene::writeTags( const NameList &tags )
 	throw Exception( "IECoreMaya::LiveScene::writeTags not supported" );
 }
 
+
+namespace
+{
+
+template<int MFnType>
+struct PrimMergerTraits;
+
+template<>
+struct PrimMergerTraits<MFn::kNurbsCurve>
+{
+	typedef FromMayaCurveConverter ConverterType;
+	typedef CurvesMergeOp MergeOpType;
+	static CurvesPrimitiveParameter * primParameter( MergeOpType* mop )
+	{
+		return mop->curvesParameter();
+	}
+};
+
+template<>
+struct PrimMergerTraits<MFn::kMesh>
+{
+	typedef FromMayaMeshConverter ConverterType;
+	typedef MeshMergeOp MergeOpType;
+	static MeshPrimitiveParameter * primParameter( MergeOpType* mop )
+	{
+		return mop->meshParameter();
+	}
+};
+
+template<int MFnType>
+class PrimMerger
+{
+		typedef typename PrimMergerTraits<MFnType>::ConverterType ConverterType;
+		typedef typename PrimMergerTraits<MFnType>::MergeOpType MergeOpType;
+		typedef typename MergeOpType::PrimitiveType PrimitiveType;
+
+	public:
+
+		static void createMergeOp( MDagPath &childDag, IECore::ModifyOpPtr &op )
+		{
+			typename ConverterType::Ptr converter = runTimeCast<ConverterType>( ConverterType::create( childDag ) );
+			if( ! converter )
+			{
+				throw Exception( ( boost::format( "Creating merge op failed! " ) % childDag.fullPathName().asChar() ).str() );
+			}
+			typename PrimitiveType::Ptr cprim = runTimeCast<PrimitiveType>( converter->convert() );
+			op = new MergeOpType;
+			op->copyParameter()->setTypedValue( false );
+			op->inputParameter()->setValue( cprim );
+		}
+
+		static void mergePrim( MDagPath &childDag, IECore::ModifyOpPtr &op )
+		{
+			typename ConverterType::Ptr converter = runTimeCast<ConverterType>( ConverterType::create( childDag ) );
+			if( ! converter )
+			{
+				throw Exception( ( boost::format( "Merging primitive failed! " ) % childDag.fullPathName().asChar() ).str() );
+			}
+			typename PrimitiveType::Ptr prim = runTimeCast<PrimitiveType>( converter->convert() );
+			MergeOpType *mop = runTimeCast<MergeOpType>( op.get() );
+			PrimMergerTraits<MFnType>::primParameter( mop )->setValue( const_cast<PrimitiveType*>( prim.get() ) );
+			op->operate();
+		}
+
+};
+
+bool hasMergeableObjects( const MDagPath &p )
+{
+	// When there are multiple child shapes that can be merged, readMergedObject() returns an object that has all the shapes merged in it.
+	// This is because multiple Maya shapes can be converted to one IECore primitive eg. nurbs curves -> IECore::CurvesPrimitive.
+	// We want to have multiple shape nodes in Maya, and want it to be one primitive if viewed through IECoreMaya::LiveScene.
+	unsigned int childCount = p.childCount();
+
+	// At least two shapes need to exist to merge.
+	if( childCount < 2 )
+	{
+		return false;
+	}
+
+	bool isMergeable = false;
+	MFnNurbsCurve::Form acceptableCurveForm = MFnNurbsCurve::kInvalid;
+	int acceptableCurveDegree = -1;
+	MFn::Type foundType = MFn::kInvalid;
+	for ( unsigned int c = 0; c < childCount; c++ )
+	{
+		MObject childObject = p.child( c );
+		MFn::Type type = childObject.apiType();
+
+		if( type == MFn::kNurbsCurve )
+		{
+			MFnNurbsCurve fnNCurve( childObject );
+
+			if( acceptableCurveForm == MFnNurbsCurve::kInvalid )
+			{
+				acceptableCurveForm = fnNCurve.form();
+			}
+			else if ( fnNCurve.form() != acceptableCurveForm )
+			{
+				msg( Msg::Warning, p.fullPathName().asChar(), "Found curves with different kind of forms under the same transform!" );
+				return false;
+			}
+
+			int degree = fnNCurve.degree();
+			if( degree == 0 )
+			{
+				msg( Msg::Warning, p.fullPathName().asChar(), "Could not get a curve degree!" );
+				return false;
+			}
+			if( acceptableCurveDegree == -1 )
+			{
+				acceptableCurveDegree = degree;
+			}
+			else if ( degree != acceptableCurveDegree )
+			{
+				msg( Msg::Warning, p.fullPathName().asChar(), "Found curves with different degrees under the same transform!" );
+				return false;
+			}
+		}
+
+		if( type == MFn::kMesh || type == MFn::kNurbsCurve )
+		{
+			if( MFnDagNode( childObject ).isIntermediateObject() )
+			{
+				continue;
+			}
+
+			if( foundType == MFn::kInvalid )
+			{
+				foundType = type;
+			}
+			else if( foundType == type )
+			{
+				isMergeable = true;
+			}
+			else
+			{
+				msg( Msg::Warning, p.fullPathName().asChar(), "Found multiple shape types under the same transform!" );
+				return false;
+			}
+		}
+	}
+
+	return isMergeable;
+
+}
+
+ConstObjectPtr readMergedObject( const MDagPath &p )
+{
+	unsigned int childCount = p.childCount();
+
+	IECore::ModifyOpPtr op = NULL;
+
+	for ( unsigned int c = 0; c < childCount; c++ )
+	{
+		MObject childObject = p.child( c );
+		MFn::Type type = childObject.apiType();
+
+		if( type != MFn::kNurbsCurve && type != MFn::kMesh )
+		{
+			continue;
+		}
+
+		MFnDagNode fnChildDag( childObject );
+		if( fnChildDag.isIntermediateObject() )
+		{
+			continue;
+		}
+
+		MDagPath childDag;
+		fnChildDag.getPath( childDag );
+
+		if( ! op )
+		{
+			if( type == MFn::kNurbsCurve )
+			{
+				PrimMerger<MFn::kNurbsCurve>::createMergeOp( childDag, op );
+			}
+			else
+			{
+				PrimMerger<MFn::kMesh>::createMergeOp( childDag, op );
+			}
+		}
+		else
+		{
+			if( type == MFn::kNurbsCurve )
+			{
+				PrimMerger<MFn::kNurbsCurve>::mergePrim( childDag, op );
+			}
+			else
+			{
+				PrimMerger<MFn::kMesh>::mergePrim( childDag, op );
+			}
+		}
+
+	}
+
+	assert( op );
+	return op->inputParameter()->getValue();
+}
+
+} // anonymous namespace.
+
 bool LiveScene::hasObject() const
 {
 	tbb::mutex::scoped_lock l( s_mutex );
@@ -515,6 +785,11 @@ bool LiveScene::hasObject() const
 	else if( m_dagPath.length() == 0 && !m_isRoot )
 	{
 		throw Exception( "IECoreMaya::LiveScene::hasObject: Dag path no longer exists!" );
+	}
+
+	if( hasMergeableObjects( m_dagPath ) )
+	{
+		return true;
 	}
 
 	for ( std::vector< CustomReader >::const_reverse_iterator it = customObjectReaders().rbegin(); it != customObjectReaders().rend(); it++ )
@@ -569,6 +844,11 @@ ConstObjectPtr LiveScene::readObject( double time ) const
 	if( fabs( MAnimControl::currentTime().as( MTime::kSeconds ) - time ) > 1.e-4 )
 	{
 		throw Exception( "IECoreMaya::LiveScene::readObject: time must be the same as on the maya timeline!" );
+	}
+
+	if ( hasMergeableObjects( m_dagPath ) )
+	{
+		return readMergedObject( m_dagPath );
 	}
 
 	for ( std::vector< CustomReader >::const_reverse_iterator it = customObjectReaders().rbegin(); it != customObjectReaders().rend(); it++ )
@@ -640,23 +920,26 @@ void LiveScene::getChildDags( const MDagPath& dagPath, MDagPathArray& paths ) co
 	{
 		MDagPath childPath = dagPath;
 		childPath.push( dagPath.child( i ) );
-		
+
+		// Remove top level nodes which are not serializable
+		// examples include ground plane, manipulators, hypershade cameras & geometry.
+		// Perhaps there are cases where non serializable objects need to be exported but
+		// it might be easier to special case add them then special case remove all unwanted objects
 		if( dagPath.length() == 0 )
 		{
-			// bizarrely, this iterates through things like the translate manipulator and
-			// the view cube too, so lets skip them so they don't show up:
-			if( childPath.node().hasFn( MFn::kManipulator3D ) )
+			MStatus r;
+			MFnDependencyNode depNode( childPath.node(), &r );
+			if( !r )
 			{
 				continue;
 			}
 
-			// looks like it also gives us the ground plane, so again, lets skip that:
-			if( childPath.fullPathName() == "|groundPlane_transform" )
+			if( !depNode.canBeWritten() )
 			{
 				continue;
 			}
 		}
-		
+
 		paths.append( childPath );
 	}
 }
@@ -724,7 +1007,7 @@ IECore::SceneInterfacePtr LiveScene::retrieveChild( const Name &name, MissingBeh
 	sel.add( m_dagPath.fullPathName() + "|" + std::string( name ).c_str() );
 	
 	MDagPath path;
-	MStatus st = sel.getDagPath( 0, path );
+	sel.getDagPath( 0, path );
 	
 	if( !path.hasFn( MFn::kTransform ) )
 	{
@@ -839,9 +1122,15 @@ void LiveScene::registerCustomObject( HasFn hasFn, ReadFn readFn )
 
 void LiveScene::registerCustomAttributes( NamesFn namesFn, ReadAttrFn readFn )
 {
+	registerCustomAttributes( namesFn, readFn, 0 );
+}
+
+void LiveScene::registerCustomAttributes( NamesFn namesFn, ReadAttrFn readFn, MightHaveFn mightHaveFn )
+{
 	CustomAttributeReader r;
 	r.m_names = namesFn;
 	r.m_read = readFn;
+	r.m_mightHave = mightHaveFn;
 	customAttributeReaders().push_back(r);
 }
 

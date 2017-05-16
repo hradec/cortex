@@ -267,8 +267,7 @@ void Camera::addStandardParameters()
 	{
 		cropWindow = boost::static_pointer_cast<Box2fData>( cropWindowIt->second )->readable();
 	}
-	if( cropWindow.isEmpty() || cropWindow.min.x < 0.0f || cropWindow.min.y < 0.0f ||
-		cropWindow.max.x > 1.0f || cropWindow.max.y > 1.0f )
+	if( cropWindow.isEmpty() )
 	{
 		cropWindow = Box2f( V2f( 0 ), V2f( 1 ) );
 		parameters()["cropWindow"] = new Box2fData( cropWindow );
@@ -304,16 +303,10 @@ void Camera::addStandardParameters()
 	}
 
 	// clipping planes
-	V2f clippingPlanes( -1.0f );
 	CompoundDataMap::const_iterator clippingIt=parameters().find( "clippingPlanes" );
-	if( clippingIt != parameters().end() && clippingIt->second->isInstanceOf( V2fDataTypeId ) )
+	if( !( clippingIt != parameters().end() && clippingIt->second->isInstanceOf( V2fDataTypeId ) ) )
 	{
-		clippingPlanes = boost::static_pointer_cast<V2fData>( clippingIt->second )->readable();
-	}
-	if( clippingPlanes[0] < 0.0f || clippingPlanes[1] < 0.0f )
-	{
-		clippingPlanes = V2f( 0.01f, 100000.0f );
-		parameters()["clippingPlanes"] = new V2fData( clippingPlanes );
+		parameters()["clippingPlanes"] = new V2fData( V2f( 0.01f, 100000.0f ) );
 	}
 
 	// shutter

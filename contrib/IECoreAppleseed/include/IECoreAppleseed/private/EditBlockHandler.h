@@ -45,6 +45,8 @@
 
 #include "IECore/CompoundData.h"
 
+#include "IECoreAppleseed/RendererController.h"
+
 namespace IECoreAppleseed
 {
 
@@ -69,8 +71,6 @@ class EditBlockHandler : boost::noncopyable
 		void editEnd();
 
 	private :
-
-		class RendererController;
 
 		renderer::Project &m_project;
 		std::auto_ptr<RendererController> m_rendererController;

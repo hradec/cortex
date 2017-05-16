@@ -93,6 +93,7 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		rop = hou.node( "/out" ).createNode( "ieSceneCacheWriter" )
 		rop.parm( "file" ).set( TestSceneCache.__testOutFile )
 		rop.parm( "rootObject" ).set( rootObject.path() )
+		rop.parmTuple( "f" ).deleteAllKeyframes()
 		return rop
 	
 	def writeSCC( self, rotation=IECore.V3d( 0, 0, 0 ), time=0 ) :
@@ -515,8 +516,8 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 			sc.writeTransform( IECore.M44dData( matrix ), 0 )
 			
 			mesh = IECore.MeshPrimitive.createBox(IECore.Box3f(IECore.V3f(0),IECore.V3f(1)))
-			mesh["Pref"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Vertex, mesh["P"].data.copy() )
-			mesh["otherP"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Vertex, mesh["P"].data.copy() )
+			mesh["Pref"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Vertex, mesh["P"].data )
+			mesh["otherP"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Vertex, mesh["P"].data )
 			mesh["Cs"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Vertex, IECore.V3fVectorData( [ IECore.V3f( 0, 0, 1 ) ] * 8 ) )
 			sc.writeObject( mesh, 0 )
 		
@@ -1431,6 +1432,93 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 			self.assertTrue( scene.hasTag( tag, IECore.SceneInterface.EveryTag ) )
 		self.assertFalse( scene.hasTag( "notATag", IECore.SceneInterface.EveryTag ) )
 	
+	def testObjTagToGroups( self ) :
+		
+		self.writeDualTaggedSCC()
+		
+		xform = self.xform()
+
+		xform.parm( "hierarchy" ).set( IECoreHoudini.SceneCacheNode.Hierarchy.SubNetworks )
+		xform.parm( "depth" ).set( IECoreHoudini.SceneCacheNode.Depth.AllDescendants )
+		xform.parm( "tagFilter" ).set( "*" )
+		xform.parm( "expand" ).pressButton()
+
+		# no groups set by default
+		for src in ( c for c in xform.allSubChildren() if c.type().nameWithCategory() == "Sop/ieSceneCacheSource" ):
+			self.assertEqual( src.geometry().primGroups(), () )
+			
+		# all groups enabled
+		xform.parm( "tagGroups" ).set(1)
+		xform.parm( "push" ).pressButton()
+	
+		for src in (c for c in xform.allSubChildren() if c.type().nameWithCategory() == "Sop/ieSceneCacheSource"):
+			if src.path() == ( xform.path() + "/1/geo/1" ):
+				for gr in src.geometry().primGroups():
+					self.assertIn( gr.name(), [ "ieTag_a" ] )
+			elif src.path() == ( xform.path() + "/1/2/geo/2" ):
+				for gr in src.geometry().primGroups():
+					self.assertIn( gr.name(), [ "ieTag_b" ] )
+			elif src.path() == ( xform.path() + "/1/2/3/geo/3" ):
+				for gr in src.geometry( ).primGroups( ):
+					self.assertIn( gr.name(), [ "ieTag_c" ] )
+			elif src.path() == ( xform.path() + "/1/4/5/geo/5" ):
+				self.assertEquals( src.geometry( ).primGroups( ), tuple() )
+
+		# group b filtered
+		xform.parm( "tagFilter" ).set( "b" )
+		xform.parm( "push" ).pressButton()
+
+		srcs = [ c for c in xform.allSubChildren() if c.type().nameWithCategory() == "Sop/ieSceneCacheSource" ]
+		self.assertEqual( set( [ pg.name() for src in srcs for pg in src.geometry().primGroups() ] ), { "ieTag_b" } )
+
+		# check that all groups present when Hierarchy is set to parenting
+		xform.parm( "collapse" ).pressButton()
+		xform.parm( "hierarchy" ).set( IECoreHoudini.SceneCacheNode.Hierarchy.Parenting )
+		xform.parm( "depth" ).set( IECoreHoudini.SceneCacheNode.Depth.AllDescendants )
+		xform.parm( "tagFilter" ).set( "*" )
+		xform.parm( "expand" ).pressButton()
+		
+		srcs = [ c for c in xform.allSubChildren( ) if c.type( ).nameWithCategory( ) == "Sop/ieSceneCacheSource" ]
+		for src in srcs :
+			for pg in src.geometry().primGroups():
+				for prim in pg.prims():
+					if prim.attribValue( "name" ) == "/1" :
+						self.assertIn( pg.name(), [ "ieTag_a" ] )
+					elif prim.attribValue( "name" ) == "/1/2" :
+						self.assertIn( pg.name(), [ "ieTag_b" ] )
+					elif prim.attribValue( "name" ) == "/1/2/3" :
+						self.assertIn( pg.name(), [ "ieTag_c" ] )
+					elif prim.attribValue( "name" ) == "/1/4/5" :
+						self.assertItemsEqual( src.geometry( ).primGroups( ), tuple( ) )
+
+		# check that d (which has no geometry) is filtered correctly when Hierarchy is set to flat hierarchy
+		xform.parm( "collapse" ).pressButton()
+		xform.parm( "hierarchy" ).set( IECoreHoudini.SceneCacheNode.Hierarchy.FlatGeometry )
+		xform.parm( "depth" ).set( IECoreHoudini.SceneCacheNode.Depth.AllDescendants )
+		xform.parm( "tagFilter" ).set( "*" )
+		xform.parm( "expand" ).pressButton()
+		
+		srcs = [ c for c in xform.allSubChildren( ) if c.type( ).nameWithCategory( ) == "Sop/ieSceneCacheSource" ]
+		for src in srcs:
+			for pg in src.geometry().primGroups():
+				for prim in pg.prims() :
+					if prim.attribValue( "name" ) == "/1" :
+						self.assertIn( pg.name(), [ "ieTag_a" ] )
+					elif prim.attribValue( "name" ) == "/1/2" :
+						self.assertIn( pg.name(), [ "ieTag_b" ] )
+					elif prim.attribValue( "name" ) == "/1/2/3" :
+						self.assertIn( pg.name(), [ "ieTag_c" ] )
+					elif prim.attribValue( "name" ) == "/1/4/5" :
+						self.assertItemsEqual( src.geometry( ).primGroups( ), tuple( ) )
+		
+		# group b filtered
+		xform.parm( "tagFilter" ).set( "b" )
+		xform.parm( "push" ).pressButton()
+		
+		srcs = [ c for c in xform.allSubChildren() if c.type().nameWithCategory() == "Sop/ieSceneCacheSource" ]
+		self.assertEqual( set( [ pg.name() for src in srcs for pg in src.geometry().primGroups() ] ), {  "ieTag_b" } )
+
+		
 	def writeAttributeSCC( self ) :
 		
 		scene = self.writeSCC()
@@ -1672,10 +1760,20 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		b = [ x for x in a.children() if x.name() != "geo" ][0]
 		c = [ x for x in b.children() if x.name() != "geo" ][0]
 		for time in times :
-			self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
-			self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
+			if hou.applicationVersion()[0] >= 14 :
+				self.assertEqual( IECore.M44d( list(xform.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time * 2, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 6, time * 3, 0 ) ) )
+			else :
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
 		
 		for time in times :
 			hou.setTime( time - spf )
@@ -1691,10 +1789,20 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		b = xform.children()[1]
 		c = xform.children()[2]
 		for time in times :
-			self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
-			self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, 2*time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time -spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 6, 3*time, 0 ) ) )
+			if hou.applicationVersion()[0] >= 14 :
+				self.assertEqual( IECore.M44d( list(xform.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.localTransformAtTime( time -spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, 2*time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time -spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 6, 3*time, 0 ) ) )
+			else :
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, 2*time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time -spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 6, 3*time, 0 ) ) )
 	
 		for time in times :
 			hou.setTime( time - spf )
@@ -1979,7 +2087,10 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		null2.parm( "tx" ).setExpression( 'origin( "", "%s", "TX" )' % c.path() )
 		null2.parm( "ty" ).setExpression( 'origin( "", "%s", "TY" )' % c.path() )
 		null2.parm( "tz" ).setExpression( 'origin( "", "%s", "TZ" )' % c.path() )
-		self.assertEqual( null2.parmTuple( "t" ).eval(), ( 3, 2.5, 0 ) )
+		if hou.applicationVersion()[0] >= 14 :
+			self.assertEqual( null2.parmTuple( "t" ).eval(), ( 6, 2.5 * 3, 0 ) )
+		else :
+			self.assertEqual( null2.parmTuple( "t" ).eval(), ( 3, 2.5, 0 ) )
 		self.assertEqual( c.parmTuple( "outT" ).eval(), ( 3, 2.5, 0 ) )
 		self.assertEqual( c.cookCount(), 1 )
 		
@@ -2917,6 +3028,7 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		facet = geo.createNode( "facet" )
 		facet.parm("postnml").set(True)
 		points = geo.createNode( "scatter" )
+		points.parm( "npts" ).set( 5000 )
 		facet.setInput( 0, box )
 		points.setInput( 0, facet )
 		points.setRenderFlag( True )
@@ -2958,8 +3070,8 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		
 		for time in [ 0.5, 1, 1.5, 2, 5, 10 ] :
 			
-			matrix = IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) )
-			sc1.writeTransform( IECore.M44dData( matrix ), time )
+			matrix = IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) )
+			sc2.writeTransform( IECore.M44dData( matrix ), time )
 			
 			matrix = IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) )
 			sc3.writeTransform( IECore.M44dData( matrix ), time )
@@ -2968,10 +3080,10 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		
 		xform.parm( "collapse" ).pressButton()
 		xform.parm( "expand" ).pressButton()
-		self.assertTrue( hou.node( xform.path()+"/1" ).isTimeDependent() )
-		self.assertTrue( hou.node( xform.path()+"/1/geo" ).isTimeDependent() )
+		self.assertFalse( hou.node( xform.path()+"/1" ).isTimeDependent() )
+		self.assertFalse( hou.node( xform.path()+"/1/geo" ).isTimeDependent() )
 		self.assertFalse( hou.node( xform.path()+"/1/geo/1" ).isTimeDependent() )
-		self.assertFalse( hou.node( xform.path()+"/1/2" ).isTimeDependent() )
+		self.assertTrue( hou.node( xform.path()+"/1/2" ).isTimeDependent() )
 		self.assertTrue( hou.node( xform.path()+"/1/2/geo" ).isTimeDependent() )
 		self.assertFalse( hou.node( xform.path()+"/1/2/geo/2" ).isTimeDependent() )
 		self.assertTrue( hou.node( xform.path()+"/1/2/3" ).isTimeDependent() )
@@ -2986,8 +3098,8 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		mesh = IECore.MeshPrimitive.createBox(IECore.Box3f(IECore.V3f(0),IECore.V3f(1)))
 		for time in [ 0.5, 1, 1.5, 2, 5, 10 ] :
 			
-			matrix = IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) )
-			sc1.writeTransform( IECore.M44dData( matrix ), time )
+			matrix = IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) )
+			sc2.writeTransform( IECore.M44dData( matrix ), time )
 			
 			mesh["Cs"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Uniform, IECore.V3fVectorData( [ IECore.V3f( time, 1, 0 ) ] * 6 ) )
 			sc2.writeObject( mesh, time )
@@ -2996,13 +3108,16 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		
 		xform.parm( "collapse" ).pressButton()
 		xform.parm( "expand" ).pressButton()
-		self.assertTrue( hou.node( xform.path()+"/1" ).isTimeDependent() )
-		self.assertTrue( hou.node( xform.path()+"/1/geo" ).isTimeDependent() )
+		self.assertFalse( hou.node( xform.path()+"/1" ).isTimeDependent() )
+		self.assertFalse( hou.node( xform.path()+"/1/geo" ).isTimeDependent() )
 		self.assertFalse( hou.node( xform.path()+"/1/geo/1" ).isTimeDependent() )
-		self.assertFalse( hou.node( xform.path()+"/1/2" ).isTimeDependent() )
+		self.assertTrue( hou.node( xform.path()+"/1/2" ).isTimeDependent() )
 		self.assertTrue( hou.node( xform.path()+"/1/2/geo" ).isTimeDependent() )
 		self.assertTrue( hou.node( xform.path()+"/1/2/geo/2" ).isTimeDependent() )
-		self.assertFalse( hou.node( xform.path()+"/1/2/3" ).isTimeDependent() )
+		if hou.applicationVersion()[0] >= 14 :
+			self.assertTrue( hou.node( xform.path()+"/1/2/3" ).isTimeDependent() )
+		else :
+			self.assertFalse( hou.node( xform.path()+"/1/2/3" ).isTimeDependent() )
 		self.assertTrue( hou.node( xform.path()+"/1/2/3/geo" ).isTimeDependent() )
 		self.assertFalse( hou.node( xform.path()+"/1/2/3/geo/3" ).isTimeDependent() )
 	
@@ -3043,10 +3158,20 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		b = [ x for x in a.children() if x.name() != "geo" ][0]
 		c = [ x for x in b.children() if x.name() != "geo" ][0]
 		for time in times :
-			self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
-			self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
+			if hou.applicationVersion()[0] >= 14 :
+				self.assertEqual( IECore.M44d( list(xform.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time * 2, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 6, time * 3, 0 ) ) )
+			else :
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 1, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 3, time, 0 ) ) )
 		
 		for time in times :
 			hou.setTime( time - spf )
@@ -3060,10 +3185,20 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		c.parm( "tx" ).setExpression( "$T+1/$FPS" )
 		
 		for time in times :
-			self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
-			self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 0, 0, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
-			self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( time, 0, 0 ) ) )
+			if hou.applicationVersion()[0] >= 14 :
+				self.assertEqual( IECore.M44d( list(xform.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 0, 0, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.localTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( time, 0, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 0, 0, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2 + time, time, 0 ) ) )
+			else :
+				self.assertEqual( IECore.M44d( list(xform.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d() )
+				self.assertEqual( IECore.M44d( list(a.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 0, 0, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(b.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( 2, time, 0 ) ) )
+				self.assertEqual( IECore.M44d( list(c.worldTransformAtTime( time - spf ).asTuple()) ), IECore.M44d.createTranslated( IECore.V3d( time, 0, 0 ) ) )
 		
 		for time in times :
 			hou.setTime( time - spf )
@@ -3184,6 +3319,100 @@ class TestSceneCache( IECoreHoudini.TestCase ) :
 		self.assertEqual( scene.attributeNames(), [] )
 		self.assertFalse( scene.hasAttribute( "test" ) )
 		self.assertEqual( scene.readAttribute( "test", 0 ), None )
+	
+	def testAttribWrangleName( self ) :
+		
+		geo = hou.node( "/obj" ).createNode( "geo" )
+		torus = geo.createNode( "torus" )
+		torus.parm( "rows" ).set( 10 )
+		torus.parm( "cols" ).set( 10 )
+		name = torus.createOutputNode( "name" )
+		name.parm( "name1" ).set( "/a" )
+		wrangle = name.createOutputNode( "attribwrangle" )
+		wrangle.parm( "class" ).set( 1 ) # primitive
+		wrangle.parm( "snippet" ).set( 's@name = "/b";' )
+		rop = self.rop( geo )
+		
+		# since the geo is named it doesn't count as a
+		# local object, but rather as a child scene.
+		
+		name.setRenderFlag( True )
+		rop.parm( "execute" ).pressButton()
+		self.assertEqual( rop.errors(), "" )
+		scene = IECore.SceneCache( TestSceneCache.__testOutFile, IECore.IndexedIO.OpenMode.Read )
+		self.assertFalse( scene.hasObject() )
+		self.assertEqual( scene.childNames(), [ "a" ] )
+		childScene = scene.child( "a" )
+		self.assertTrue( childScene.hasObject() )
+		self.assertEqual( childScene.childNames(), [] )
+		self.assertEqual( childScene.readObject( 0 ).variableSize( IECore.PrimitiveVariable.Interpolation.Uniform ), 100 )
+		
+		# this is still true after wrangling the name attrib,
+		# which we are testing because attribwrangle nodes
+		# do not clean up the mess they've made with the
+		# string table for attributes.
+		
+		wrangle.setRenderFlag( True )
+		rop.parm( "execute" ).pressButton()
+		self.assertEqual( rop.errors(), "" )
+		scene = IECore.SceneCache( TestSceneCache.__testOutFile, IECore.IndexedIO.OpenMode.Read )
+		self.assertFalse( scene.hasObject() )
+		self.assertEqual( scene.childNames(), [ "b" ] )
+		childScene = scene.child( "b" )
+		self.assertTrue( childScene.hasObject() )
+		self.assertEqual( childScene.childNames(), [] )
+		self.assertEqual( childScene.readObject( 0 ).variableSize( IECore.PrimitiveVariable.Interpolation.Uniform ), 100 )
+		
+		# it works for nested names too
+		
+		wrangle.parm( "snippet" ).set( 's@name = "/c/d/e";' )
+		rop.parm( "execute" ).pressButton()
+		self.assertEqual( rop.errors(), "" )
+		scene = IECore.SceneCache( TestSceneCache.__testOutFile, IECore.IndexedIO.OpenMode.Read )
+		self.assertFalse( scene.hasObject() )
+		self.assertEqual( scene.childNames(), [ "c" ] )
+		childScene = scene.child( "c" )
+		self.assertFalse( childScene.hasObject() )
+		self.assertEqual( childScene.childNames(), [ "d" ] )
+		childScene = childScene.child( "d" )
+		self.assertFalse( childScene.hasObject() )
+		self.assertEqual( childScene.childNames(), [ "e" ] )
+		childScene = childScene.child( "e" )
+		self.assertTrue( childScene.hasObject() )
+		self.assertEqual( childScene.childNames(), [] )
+		self.assertEqual( childScene.readObject( 0 ).variableSize( IECore.PrimitiveVariable.Interpolation.Uniform ), 100 )
+
+	def testSceneNameTakesPrecedence( self ) :
+		
+		def write() :
+			
+			scene = self.writeSCC()
+			sc = scene.createChild( str( 4 ) )
+			mesh = IECore.MeshPrimitive.createBox(IECore.Box3f(IECore.V3f(0),IECore.V3f(1)))
+			mesh["Cs"] = IECore.PrimitiveVariable( IECore.PrimitiveVariable.Interpolation.Uniform, IECore.V3fVectorData( [ IECore.V3f( 1, 0, 0 ) ] * 6 ) )
+			mesh.blindData()["name"] = IECore.StringData( "blindName" )
+			matrix = IECore.M44d.createTranslated( IECore.V3d( 1, 0, 0 ) )
+			for time in ( 0, 1, 2 ) :
+				sc.writeObject( mesh, time )
+				sc.writeTransform( IECore.M44dData( matrix ), time )
+		
+		write()
+		
+		spf = 1.0 / hou.fps()
+		
+		sop = self.sop()
+		sop.parm( "geometryType" ).set( IECoreHoudini.SceneCacheNode.GeometryType.Houdini )
+		
+		for time in ( 0, 1, 2 ) :
+			
+			hou.setTime( time - spf )
+			geometry = sop.geometry()
+			prims = geometry.prims()
+			nameAttr = geometry.findPrimAttrib( "name" )
+			self.assertTrue( "blindName" not in nameAttr.strings() )
+			self.assertEqual( nameAttr.strings(), tuple( [ '/1', '/1/2', '/1/2/3', '/4' ] ) )
+			for name in nameAttr.strings() :
+				self.assertEqual( len([ x for x in prims if x.attribValue( "name" ) == name ]), 6 )
 	
 	def tearDown( self ) :
 		
