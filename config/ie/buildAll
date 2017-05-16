@@ -52,26 +52,35 @@ def installDocs() :
 	
 		raise RuntimeError("Error : scons installDoc " + str( " ".join( buildArgs ) ) )
 
-if IEEnv.platform() == "cent6.x86_64" :
+if IEEnv.platform() in ( "cent7.x86_64", ) :
 	
 	for compilerVersion in IEEnv.activeVersions(IEEnv.registry["compilers"]["gcc"]): 
 		for pythonVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["python"] ) :
-			build( [ "COMPILER_VERSION="+compilerVersion, "DL_VERSION=UNDEFINED", "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION=4.0.9.1" ] )
+			build( [ "COMPILER_VERSION="+compilerVersion, "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION=UNDEFINED", "APPLESEED_VERSION=UNDEFINED", "DL_VERSION=UNDEFINED" ] )
+	
+	for aiVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["arnold"] ):
+		for compilerVersion in IEEnv.activeVersions(IEEnv.registry["compilers"]["gcc"]): 
+			for pythonVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["python"] ) :
+				build( [ "COMPILER_VERSION="+compilerVersion, "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION="+aiVersion, "APPLESEED_VERSION=UNDEFINED", "DL_VERSION=UNDEFINED" ] )
 	
 	for dlVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["3delight"] ):
-		for pythonVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["python"] ) :
-			build( [ "COMPILER_VERSION=4.1.2", "DL_VERSION="+dlVersion, "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION=UNDEFINED" ] )
+		for compilerVersion in IEEnv.activeVersions(IEEnv.registry["compilers"]["gcc"]): 
+			for pythonVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["python"] ) :
+				build( [ "COMPILER_VERSION="+compilerVersion, "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION=UNDEFINED", "APPLESEED_VERSION=UNDEFINED", "DL_VERSION="+dlVersion ] )
+	
+	for appleseedVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["appleseed"] ):
+		for compilerVersion in IEEnv.activeVersions(IEEnv.registry["compilers"]["gcc"]): 
+			for pythonVersion in IEEnv.activeVersions( IEEnv.registry["apps"]["python"] ) :
+				build( [ "COMPILER_VERSION="+compilerVersion, "PYTHON_VERSION="+pythonVersion, "ARNOLD_VERSION=UNDEFINED", "APPLESEED_VERSION="+appleseedVersion, "DL_VERSION=UNDEFINED" ] )
 	
 	for mayaVersion in IEEnv.activeAppVersions( "maya" ) :
-		build( [ "APP=maya", "APP_VERSION="+mayaVersion, "DL_VERSION=10.0.142", "ARNOLD_VERSION=4.0.9.1" ] )
+		build( [ "APP=maya", "APP_VERSION="+mayaVersion ] )
 	
 	for nukeVersion in IEEnv.activeAppVersions( "nuke" ) :
-		if nukeVersion.startswith( "8" ) :
-			build( [ "APP=nuke", "APP_VERSION="+nukeVersion ] )
+		build( [ "APP=nuke", "APP_VERSION="+nukeVersion ] )
 	
 	for houdiniVersion in IEEnv.activeAppVersions( "houdini" ) :
-		if houdiniVersion.endswith( "-python2.7" ) :
-			build( [ "APP=houdini", "APP_VERSION="+houdiniVersion ] )
+		build( [ "APP=houdini", "APP_VERSION="+houdiniVersion ] )
 	
 	installDocs()
 	

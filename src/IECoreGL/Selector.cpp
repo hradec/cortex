@@ -217,46 +217,31 @@ class Selector::Implementation : public IECore::RefCounted
 			}
 		}
 
+		static const Shader *defaultIDShader()
+		{
+			const char *fragmentSource =
+
+				"#version 330\n"
+				""
+				"uniform uint ieCoreGLNameIn;"
+				""
+				"layout( location=0 ) out uint ieCoreGLNameOut;"
+				""
+				"void main()"
+				"{"
+				"	ieCoreGLNameOut = ieCoreGLNameIn;"
+				"}";
+
+			static ShaderPtr s = new Shader( "", fragmentSource );
+			return s.get();
+		}
+
 		static Selector *currentSelector()
 		{
 			return g_currentSelector;
 		}
 
 	private :
-		
-		void bindIDShader( const IECoreGL::Shader *shader )
-		{
-			if( shader == m_currentIDShader )
-			{
-				// early out to avoid the relatively expensive operations
-				// below if we've already loaded the shader.
-				return;
-			}
-		
-			const IECoreGL::Shader::Parameter *nameParameter = shader->uniformParameter( "ieCoreGLNameIn" );
-			if( !nameParameter )
-			{
-				throw IECore::Exception( "ID shader does not have an ieCoreGLNameIn parameter" );
-			}
-			
-			GLint fragDataLocation = glGetFragDataLocation( shader->program(), "ieCoreGLNameOut" );
-			if( fragDataLocation < 0 )
-			{
-				throw IECore::Exception( "ID shader does not have an ieCoreGLNameOut output" );			
-			}
-			
-			m_nameUniformLocation = nameParameter->location;
-			
-			m_currentIDShader = shader;
-			glUseProgram( m_currentIDShader->program() );
-			
-			std::vector<GLenum> buffers;
-			buffers.resize( fragDataLocation + 1, GL_NONE );
-			buffers[buffers.size()-1] = GL_COLOR_ATTACHMENT0;
-			glDrawBuffers( buffers.size(), &buffers[0] );
-			
-			loadNameIDRender( m_currentName );
-		}
 		
 		Mode m_mode;
 		Imath::M44d m_postProjectionMatrix;
@@ -318,38 +303,6 @@ class Selector::Implementation : public IECore::RefCounted
 		std::stack<ConstShaderPtr> m_IDShaderStack;
 		GLint m_prevViewport[4];
 		GLint m_nameUniformLocation;
-		
-		static const std::string &idShaderFragmentSource()
-		{
-			static const std::string fragmentSource = 
-
-				"#version 330\n"
-				""
-				"uniform uint ieCoreGLNameIn;"
-				""
-				"layout( location=0 ) out uint ieCoreGLNameOut;"
-				""
-				"void main()"
-				"{"
-				"	ieCoreGLNameOut = ieCoreGLNameIn;"
-				"}";
-
-			return fragmentSource;
-		}
-
-		static std::vector<StateComponentPtr> &idStateComponents()
-		{
-			static std::vector<StateComponentPtr> s;
-			if( !s.size() )
-			{
-				s.push_back( new ShaderStateComponent(
-					ShaderLoader::defaultShaderLoader(), TextureLoader::defaultTextureLoader(),
-					"", "", idShaderFragmentSource(),
-					new IECore::CompoundObject()
-				) );
-			}
-			return s;
-		}
 
 		void beginIDRender()
 		{
@@ -362,18 +315,18 @@ class Selector::Implementation : public IECore::RefCounted
 			glGetIntegerv( GL_VIEWPORT, m_prevViewport );
 			glViewport( 0, 0, 128, 128 );
 			
+			GLfloat prevClearColor[4];
+			GLfloat prevClearDepth;
+			glGetFloatv( GL_COLOR_CLEAR_VALUE, prevClearColor );
+			glGetFloatv( GL_DEPTH_CLEAR_VALUE, &prevClearDepth );
 			glClearColor( 0.0, 0.0, 0.0, 1.0 );
 			glClearDepth( 1.0 );
 			glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-			
-			const std::vector<StateComponentPtr> &stateComponents = idStateComponents();
-			for( std::vector<StateComponentPtr>::const_iterator it = stateComponents.begin(), eIt = stateComponents.end(); it != eIt; it++ )
-			{
-				m_baseState->add( *it, true /* override */ );
-			}
+			glClearColor( prevClearColor[0], prevClearColor[1], prevClearColor[2], prevClearColor[3] );
+			glClearDepth( prevClearDepth );
 			
 			glGetIntegerv( GL_CURRENT_PROGRAM, &m_prevProgram );
-			pushIDShader( m_baseState->get<ShaderStateComponent>()->shaderSetup()->shader() );	
+			pushIDShader( defaultIDShader() );
 		}
 
 		void loadNameIDRender( GLuint name )
@@ -421,6 +374,40 @@ class Selector::Implementation : public IECore::RefCounted
 			}
 		}
 
+		void bindIDShader( const IECoreGL::Shader *shader )
+		{
+			if( shader == m_currentIDShader )
+			{
+				// early out to avoid the relatively expensive operations
+				// below if we've already loaded the shader.
+				return;
+			}
+
+			const IECoreGL::Shader::Parameter *nameParameter = shader->uniformParameter( "ieCoreGLNameIn" );
+			if( !nameParameter )
+			{
+				throw IECore::Exception( "ID shader does not have an ieCoreGLNameIn parameter" );
+			}
+
+			GLint fragDataLocation = glGetFragDataLocation( shader->program(), "ieCoreGLNameOut" );
+			if( fragDataLocation < 0 )
+			{
+				throw IECore::Exception( "ID shader does not have an ieCoreGLNameOut output" );
+			}
+
+			m_nameUniformLocation = nameParameter->location;
+
+			m_currentIDShader = shader;
+			glUseProgram( m_currentIDShader->program() );
+
+			std::vector<GLenum> buffers;
+			buffers.resize( fragDataLocation + 1, GL_NONE );
+			buffers[buffers.size()-1] = GL_COLOR_ATTACHMENT0;
+			glDrawBuffers( buffers.size(), &buffers[0] );
+
+			loadNameIDRender( m_currentName );
+		}
+
 		//////////////////////////////////////////////////////////////////////////
 		// OcclusionQuery
 		//////////////////////////////////////////////////////////////////////////
@@ -438,9 +425,17 @@ class Selector::Implementation : public IECore::RefCounted
 		{
 			m_queries.resize( 0 );
 			m_queryNames.resize( 0 );
+
+			GLfloat prevClearColor[4];
+			GLfloat prevClearDepth;
+			glGetFloatv( GL_COLOR_CLEAR_VALUE, prevClearColor );
+			glGetFloatv( GL_DEPTH_CLEAR_VALUE, &prevClearDepth );
 			glClearColor( 0.0, 0.0, 0.0, 1.0 );
 			glClearDepth( 1.0 );
 			glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
+			glClearColor( prevClearColor[0], prevClearColor[1], prevClearColor[2], prevClearColor[3] );
+			glClearDepth( prevClearDepth );
+
 			m_baseState->add( depthTestStateComponent(), true /* override */ );
 		}
 
@@ -527,6 +522,11 @@ void Selector::pushIDShader( const IECoreGL::Shader *idShader )
 void Selector::popIDShader()
 {
 	m_implementation->popIDShader();
+}
+
+const Shader *Selector::defaultIDShader()
+{
+	return Implementation::defaultIDShader();
 }
 
 Selector *Selector::currentSelector()

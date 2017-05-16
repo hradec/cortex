@@ -84,10 +84,6 @@ class IECORE_API MeshTangentsOp : public MeshPrimitiveOp
 		StringParameterPtr m_vPrimVarNameParameter;
 		StringParameterPtr m_uTangentPrimVarNameParameter;
 		StringParameterPtr m_vTangentPrimVarNameParameter;
-
-		struct CalculateTangents;
-		struct HandleErrors;
-
 };
 
 IE_CORE_DECLAREPTR( MeshTangentsOp );

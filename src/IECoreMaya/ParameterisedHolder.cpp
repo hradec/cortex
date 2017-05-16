@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2007-2011, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2007-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -56,6 +56,7 @@
 #include "maya/MFnMesh.h"
 #include "maya/MFnGenericAttribute.h"
 #include "maya/MPxManipContainer.h"
+#undef None // must come after certain Maya includes which include X11/X.h
 
 #include "IECoreMaya/ParameterisedHolder.h"
 #include "IECoreMaya/ParameterHandler.h"
@@ -299,7 +300,7 @@ MStatus ParameterisedHolder<B>::setParameterised( const std::string &className, 
 	MPlug pClassName( B::thisMObject(), aParameterisedClassName );
 	MPlug pVersion( B::thisMObject(), aParameterisedVersion );
 	MPlug pSearchPathEnvVar( B::thisMObject(), aParameterisedSearchPathEnvVar );
-	MStatus s = pClassName.setValue( className.c_str() );
+	pClassName.setValue( className.c_str() );
 	pVersion.setValue( classVersion );
 	pSearchPathEnvVar.setValue( searchPathEnvVar.c_str() );
 
@@ -331,7 +332,7 @@ IECore::RunTimeTypedPtr ParameterisedHolder<B>::getParameterised( std::string *c
 	int version;
 	MString searchPathEnvVar;
 
-	MStatus s = pClassName.getValue( className );
+	pClassName.getValue( className );
 
 	pVersion.getValue( version );
 	pSearchPathEnvVar.getValue( searchPathEnvVar );

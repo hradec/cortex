@@ -68,14 +68,14 @@ using namespace boost;
 // AttributeState implementation
 ////////////////////////////////////////////////////////////////////////
 
-IECoreRI::RendererImplementation::AttributeState::AttributeState()
+#ifdef IECORERI_WITH_NSI
+
+IECoreRI::RendererImplementation::AttributeState::AttributeState( const NSI::ShaderState &nsiShaderState )
+	:	nsiShaderState( nsiShaderState )
 {
 }
 
-IECoreRI::RendererImplementation::AttributeState::AttributeState( const AttributeState &other )
-{
-	primVarTypeHints = other.primVarTypeHints;
-}
+#endif
 
 ////////////////////////////////////////////////////////////////////////
 // IECoreRI::RendererImplementation implementation
@@ -92,7 +92,6 @@ IECoreRI::RendererImplementation::RendererImplementation( const std::string &nam
 	:	m_sharedData( new SharedData ), m_inWorld( false ), m_inEdit( false )
 {
 	m_options = new CompoundData();
-	constructCommon();
 	if( name!="" )
 	{
 		RiBegin( (char *)name.c_str() );
@@ -115,6 +114,8 @@ IECoreRI::RendererImplementation::RendererImplementation( const std::string &nam
 	m_contextToSharedDataMapKey = m_context;
 	ContextToSharedDataMapMutex::scoped_lock l( s_contextToSharedDataMapMutex );
 	s_contextToSharedDataMap.insert( std::make_pair( m_contextToSharedDataMapKey, m_sharedData ) );
+
+	constructCommon();
 }
 
 // This constructor gets called in procSubdivide(), and inherits the SharedData from the RendererImplementation
@@ -122,8 +123,6 @@ IECoreRI::RendererImplementation::RendererImplementation( const std::string &nam
 IECoreRI::RendererImplementation::RendererImplementation( SharedData::Ptr sharedData, IECore::CompoundDataPtr options )
 	:	m_context( 0 ), m_sharedData( sharedData ), m_options( options ), m_inWorld( true ), m_inEdit( false )
 {
-	constructCommon();
-	
 	// Add a correspondance between the current context and this object's SharedData instance,
 	// in case RendererImplementation() gets called later on with no arguments. This creates a
 	// RendererImplementation in the current context, which must have access to this object's
@@ -132,6 +131,8 @@ IECoreRI::RendererImplementation::RendererImplementation( SharedData::Ptr shared
 	m_contextToSharedDataMapKey = RiGetContext();
 	ContextToSharedDataMapMutex::scoped_lock l( s_contextToSharedDataMapMutex );
 	s_contextToSharedDataMap.insert( std::make_pair( m_contextToSharedDataMapKey, m_sharedData ) );
+
+	constructCommon();
 }
 
 // This constructor creates a RendererImplementation using the current RtContext. The SharedData is acquired by 
@@ -146,8 +147,6 @@ IECoreRI::RendererImplementation::RendererImplementation( SharedData::Ptr shared
 IECoreRI::RendererImplementation::RendererImplementation()
 	:	m_context( 0 ), m_options( 0 ), m_inWorld( true ), m_inEdit( false )
 {
-	constructCommon();
-	
 	m_contextToSharedDataMapKey = RiGetContext();
 	ContextToSharedDataMapMutex::scoped_lock l( s_contextToSharedDataMapMutex );
 
@@ -169,13 +168,19 @@ IECoreRI::RendererImplementation::RendererImplementation()
 	{
 		m_sharedData = it->second;
 	}
-	
+
 	s_contextToSharedDataMap.insert( std::make_pair( m_contextToSharedDataMapKey, m_sharedData ) );
+
+	constructCommon();
 }
 
 void IECoreRI::RendererImplementation::constructCommon()
 {
+#ifdef IECORERI_WITH_NSI
+	m_attributeStack.push( AttributeState( NSI::ShaderState( m_sharedData->handleGenerator ) ) );
+#else
 	m_attributeStack.push( AttributeState() );
+#endif
 
 	const char *fontPath = getenv( "IECORE_FONT_PATHS" );
 	if( fontPath )
@@ -273,6 +278,18 @@ void IECoreRI::RendererImplementation::setOption( const std::string &name, IECor
 		return;
 	}
 
+
+	if( name == "sampleMotion" )
+	{
+		if( m_options->readable().find( "ri:hider:samplemotion" ) == m_options->readable().end() )
+		{
+			// If we aren't specifying the specific RenderMan sample motion option, then drive it
+			// from the general setting ( if the specific setting comes after it will override )
+			m_options->writable()["ri:hider:samplemotion"] = value->copy();
+		}
+		return;
+	}
+	
 	// we need to group related options together into a single RiOption or RiHider call, so we
 	// just accumulate the options until worldBegin() where we'll emit them.
 	m_options->writable()[name] = value->copy();
@@ -1295,6 +1312,13 @@ void IECoreRI::RendererImplementation::shader( const std::string &type, const st
 {
 	ScopedContext scopedContext( m_context );
 
+#ifdef IECORERI_WITH_NSI
+	if( m_attributeStack.top().nsiShaderState.shader( type, name, parameters ) )
+	{
+		return;
+	}
+#endif
+
 	ConstShaderPtr s = 0;
 	try
 	{
@@ -1385,6 +1409,19 @@ void IECoreRI::RendererImplementation::shader( const std::string &type, const st
 
 void IECoreRI::RendererImplementation::light( const std::string &name, const std::string &handle, const IECore::CompoundDataMap &parameters )
 {
+	const char *unprefixedName = name.c_str();
+	if( name.find( ':' ) != string::npos )
+	{
+		if( boost::starts_with( name, "ri:" ) )
+		{
+			unprefixedName += 3;
+		}
+		else
+		{
+			return;
+		}
+	}
+
 	ScopedContext scopedContext( m_context );
 	IECore::CompoundDataMap parametersCopy = parameters;
 	parametersCopy["__handleid"] = new StringData( handle );
@@ -1401,15 +1438,26 @@ void IECoreRI::RendererImplementation::light( const std::string &name, const std
 		parametersCopy.erase( it );
 	}
 
+	it = parametersCopy.find( "__areaLight" );
+	if( it != parametersCopy.end() )
+	{
+		BoolData *b = runTimeCast<BoolData>( it->second.get() );
+		if( b && b->readable() )
+		{
+			areaLight = true;
+		}
+		parametersCopy.erase( it );
+	}
+
 	ParameterList pl( parametersCopy );
 
 	if( areaLight )
 	{
-		RiAreaLightSourceV( const_cast<char *>(name.c_str()), pl.n(), pl.tokens(), pl.values() );
+		RiAreaLightSourceV( const_cast<char *>( unprefixedName ), pl.n(), pl.tokens(), pl.values() );
 	}
 	else
 	{
-		RiLightSourceV( const_cast<char *>(name.c_str()), pl.n(), pl.tokens(), pl.values() );
+		RiLightSourceV( const_cast<char *>( unprefixedName ), pl.n(), pl.tokens(), pl.values() );
 	}
 }
 
@@ -1916,19 +1964,13 @@ void IECoreRI::RendererImplementation::emitPatchMeshPrimitive( const IECore::Pat
 		pv.n(), pv.tokens(), pv.values()
 	);
 }
-	
+
 /////////////////////////////////////////////////////////////////////////////////////////
 // procedurals
 /////////////////////////////////////////////////////////////////////////////////////////
 
 void IECoreRI::RendererImplementation::procedural( IECore::Renderer::ProceduralPtr proc )
 {
-	Imath::Box3f bound = proc->bound();
-	if( bound.isEmpty() )
-	{
-		return;
-	}
-
 	ScopedContext scopedContext( m_context );
 
 	if( ExternalProcedural *externalProc = dynamic_cast<ExternalProcedural *>( proc.get() ) )
@@ -1943,9 +1985,14 @@ void IECoreRI::RendererImplementation::procedural( IECore::Renderer::ProceduralP
 
 void IECoreRI::RendererImplementation::standardProcedural( Procedural *proc )
 {
+	const Imath::Box3f bound = proc->bound();
+	if( bound.isEmpty() )
+	{
+		return;
+	}
 
 	RtBound riBound;
-	convert( proc->bound(), riBound );
+	convert( bound, riBound );
 
 	ProceduralData *data = new ProceduralData;
 	data->procedural = proc;
@@ -2026,8 +2073,14 @@ void dynamicLoadFree( void *voidData )
 
 void IECoreRI::RendererImplementation::externalProcedural( ExternalProcedural *proc )
 {
+	const Imath::Box3f bound = proc->bound();
+	if( bound.isEmpty() )
+	{
+		return;
+	}
+
 	RtBound riBound;
-	convert( proc->bound(), riBound );
+	convert( bound, riBound );
 
 	if( boost::algorithm::ends_with( proc->fileName(), ".rib" ) )
 	{

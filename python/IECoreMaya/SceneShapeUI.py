@@ -223,6 +223,39 @@ def _dagMenu( menu, sceneShape ) :
 					tagTree[parts[0]].append( leftOverTag )
 		if tagTree :
 
+			tags = tagTree.keys()
+			tags.sort()
+
+			def addTagSubMenuItems( command ):
+
+				import copy
+				copiedTagTree = copy.deepcopy( tagTree )
+
+				for tag in tags :
+					
+					subtags = copiedTagTree[tag]
+					subtags.sort()
+
+					if "" in subtags:
+						maya.cmds.menuItem(
+							label = tag,
+							command = IECore.curry( command, sceneShapes, tag )
+						)
+						subtags.remove("")
+					
+					if subtags:
+						maya.cmds.menuItem(
+							label = tag,
+							subMenu = True
+						)
+
+						for tagSuffix in subtags :
+							maya.cmds.menuItem(
+								label = tagSuffix,
+								command = IECore.curry( command, sceneShapes, tag + ":" + tagSuffix )
+							)
+						maya.cmds.setParent( "..", menu=True )	
+
 			maya.cmds.menuItem(
 				label = "Tags filter...",
 				radialPosition = "S",
@@ -234,33 +267,7 @@ def _dagMenu( menu, sceneShape ) :
 				command = IECore.curry( __setTagsFilterPreviewAttributes, sceneShapes, "" )
 			)
 
-			tags = tagTree.keys()
-			tags.sort()
-
-			for tag in tags :
-				
-				subtags = tagTree[tag]
-				subtags.sort()
-				
-				if "" in subtags:
-					maya.cmds.menuItem(
-						label = tag,
-						command = IECore.curry( __setTagsFilterPreviewAttributes, sceneShapes, tag )
-					)
-					subtags.remove("")
-				
-				if subtags:
-					maya.cmds.menuItem(
-						label = tag,
-						subMenu = True
-					)
-
-					for tagSuffix in subtags :
-						maya.cmds.menuItem(
-							label = tagSuffix,
-							command = IECore.curry( __setTagsFilterPreviewAttributes, sceneShapes, tag + ":" + tagSuffix )
-						)
-					maya.cmds.setParent( "..", menu=True )			
+			addTagSubMenuItems( __setTagsFilterPreviewAttributes )
 					
 			maya.cmds.setParent( "..", menu=True )			
 			
@@ -298,6 +305,17 @@ def _dagMenu( menu, sceneShape ) :
 						command = IECore.curry( __expandToSelected, sceneShapes[0] )
 					)
 			
+		if tagTree :
+			maya.cmds.menuItem(
+				label = "Expand by Tag...",
+				radialPosition = "S",
+				subMenu = True
+			)
+		
+			addTagSubMenuItems( __expandAll )
+					
+			maya.cmds.setParent( "..", menu=True )			
+
 		maya.cmds.setParent( "..", menu=True )
 
 		parentSceneShape = __parentSceneShape( sceneShapes )
@@ -407,18 +425,18 @@ def __expandOnce( sceneShapes, *unused ) :
 	toSelect = []
 	for sceneShape in sceneShapes:
 		fnS = IECoreMaya.FnSceneShape( sceneShape )
-		new = fnS.expandOnce()
+		new = fnS.expandOnce( preserveNamespace=True )
 		toSelect.extend( map( lambda x: x.fullPathName(), new ) )
 	if toSelect:
 		maya.cmds.select( toSelect, replace=True )
 
 ## Recursively expand the scene shapes
-def __expandAll( sceneShapes, *unused ) :
+def __expandAll( sceneShapes, tagName=None, *unused ) :
 	
 	toSelect = []
 	for sceneShape in sceneShapes:
 		fnS = IECoreMaya.FnSceneShape( sceneShape )
-		newFn = fnS.expandAll()
+		newFn = fnS.expandAll( preserveNamespace=True, tagName=tagName )
 		
 		toSelect.extend( map( lambda x: x.fullPathName(), newFn ) )
 	if toSelect:
@@ -429,7 +447,7 @@ def __expandAsGeometry( sceneShapes, *unused ) :
 	
 	for sceneShape in sceneShapes:
 		fnS = IECoreMaya.FnSceneShape( sceneShape )
-		fnS.convertAllToGeometry()
+		fnS.convertAllToGeometry( True )
 
 ## Expand the scene shape the minimal amount to reach the selected components
 def __expandToSelected( sceneShape, *unused ) :

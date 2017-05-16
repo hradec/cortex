@@ -1,3 +1,599 @@
+9.18.0
+======
+
+Features
+--------
+
+- IECore::MeshAlgo : Added calculateTangents() function.
+  - MeshAlgo is a new namepsace for functions which operate on MeshPrimitives.
+  - MeshTangentOp has been updated to use `MeshAlgo::calculateTangents()` internally.
+- IECoreMaya:LiveScene : Convert Maya Sets to Scene Tags.
+  - Sets will be converted if they have a dynmaic bool attribute called "ieExport" which is set True.
+- IECoreHoudini SceneNodes : Added an option to load Scene Tags as Houdini PrimGroups.
+
+Improvements
+------------
+
+- IECoreArnold::ParameterAlgo : Avoid warnings when redeclaring attributes.
+- IECoreHoudini Op SOPs : Added "ie" prefix to the tab menu for Cortex Ops loaded as Houdini SOPs.
+  - This affects Image Engine only.
+
+Fixes
+-----
+
+- IECoreMaya::LiveScene : Ignore non-serializable objects introduced by Maya 2016 hypershade.
+
+Build
+-----
+
+- Removed stale asserts.
+- Removed references to dead test cases.
+
+9.17.0
+======
+
+Improvements
+------------
+
+- `IECoreMaya::SceneShape` :
+  - Added tagName argument to `FnSceneShape.expandAll()`
+  - Added "Expand by Tag" option to SceneShape context menu.
+- `IECoreArnold::ParameterAlgo`: Support `AI_TYPE_RGB`, `AI_TYPE_RGBA`, and `AI_TYPE_VECTOR`.
+- `ImageDisplayDriver`: Support "header:" metadata convention
+- `EXRImageWriter`: Added DreamWorks compression options (if compiled with OpenExr 2.2+).
+- `OStreamMessageHandler`: Made m_stream protected to allow access from subclasses.
+
+9.16.2
+======
+
+- Build
+  - Added CXXSTD build argument.
+  - Made compatible with recent FreeType versions.
+  - Fixed C++11 incompatibilities.
+  - Fixed debug builds.
+  - Fixed linking for single-lib Alembic.
+
+9.16.1
+======
+
+Fixes
+-----
+
+- `IECoreMaya::SceneShape` :
+  - Fixed redraw issue in Maya 2016 parallel mode.
+  - Fixes computation for expanded SceneShapes in Maya 2016 parallel mode.
+
+9.16.0
+======
+
+Improvements
+------------
+
+- IECoreAppleseed : Added support for int[] and float[] OSL shader parameters.
+- Build :
+	- Added support for Alembic 1.6.
+	- Added support for Boost 1.61
+	- Added support for macOS Sierra
+
+9.15.0
+======
+
+Improvements
+------------
+
+- IECoreArnold::ParameterAlgo :
+  - Added support for point parameters.
+  - Added support for DoubleData and M44dData
+  - Added node name to warnings.
+- IECoreRI : Added support for render:sampleMotion option.
+- IECoreMaya :
+  - Added UndoChunk `with` statement.
+  - Added RefreshDisabled `with` statement.
+
+9.14.1
+======
+
+Fixes
+-----
+
+- Arnold `UniverseBlock`
+  - Shutdown lazily to improve read-only access (e.g. shader loading on script open).
+  - Fixed threadsafety issues with construction/destruction.
+  - Fixed writability issues in `Renderer` and tests.
+- `IECoreGL::Selector`: Fixed leak of `glClearColor` and `glClearDepth`.
+
+9.14.0
+======
+
+#### IECore
+
+- ParameterAlgo
+  - Added manual conversion from BoolVectorData to AtArray.
+- DisplayDriverServer
+  - Supporting automatic selection of a free port.
+
+#### IECoreMaya
+
+- SceneShape
+  - Added preserveNamespace argument to convertAllToGeometry().
+  - Recursive expandAsGeometry() now preserves namespace.
+  - Fixed bug converting multiple curves to geometry.
+  - Fixed naming backward compatibility when converting and connecting to curves.
+
+9.13.2
+======
+
+#### IECore
+
+- Added 'tx' support for TIFFImageReader
+
+9.13.1
+======
+
+#### IECoreArnold
+
+- CurvesAlgo : Convert "N" to orientations.
+
+9.13.0
+======
+
+#### IECoreMaya
+
+- Fixed LiveScene object merging bug (#524).
+
+#### IECoreAppleseed
+
+- Added support code and improvements for new renderer backend in Gaffer (#520).
+
+9.12.1
+======
+
+#### IECore
+
+- Camera
+  - Added support for negative clipping planes ( useful on ortho cams )
+
+#### IECoreHoudini
+
+- Fixed CurvesPrimitive duplication in Houdini SceneCacheSource SOP
+
+9.12.0
+======
+
+#### IECoreArnold
+
+- Added read/write access concept to UniverseBlock (#514).
+- Added automatic loading of metadata files to UniverseBlock (#514).
+- Stopped adding "user:" prefix to arbitrary primitive variables. Instead
+  variables which clash with built in parameters are ignored instead (#519).
+- Added support for GeometricTypedData interpretation in primitive variables (#519).
+- Support setting enum parameters using integer index
+
+#### IECoreMaya
+
+- LiveScene
+  - Added support for multiple shapes under a transform, by merging them
+    into a single Cortex object (#516).
+- SceneShapes
+  - Added support for converting CurvesPrimitives to multiple maya curves
+    under the same transform (#516).
+
+9.11.4
+======
+
+#### IECore
+
+- Removed code that discarded Camera crop windows outside 0-1
+
+#### IECoreMaya
+
+- Fixed crash in ToMayaSkinClusterConverter when updating topology
+
+#### IECoreArnold
+
+- Added support for arbitrary camera parameters
+
+#### Build
+
+- Added DEBUG option and fixed debug build errors
+
+9.11.3
+======
+
+#### IECoreArnold
+
+- MeshAlgo : Fix iterator invalidation bug.
+
+9.11.2
+======
+
+#### Build
+
+- Fixed linking of IECoreAppleseed on OS X.
+
+
+9.11.1
+======
+
+#### IECoreArnold
+
+- Improved UV set support.
+- Support for FaceVarying primitive variables.
+- Support for Constant V3f primitive variables.
+- Support for Vertex primitive variables on PointsPrimitives.
+- Fixed incorrect output of Vertex primitive variables on CurvesPrimitives (these are not yet valid in Arnold)
+
+#### IECoreAppleseed
+
+- Made LogTarget class public.
+- Added dataToString overload accepting a const Data*.
+- Refactored transform conversion code out of TransformStack.
+
+9.11.0
+======
+
+#### IECoreArnold
+
+- Added support for AI_TYPE_VECTOR in `ParameterAlgo::setParameter()`.
+- Stopped making unnecessary copies of mesh topology in `MeshAlgo::convert()`.
+- Added support for point arrays in `ParameterAlgo::setParameter()`.
+
+9.10.1
+======
+
+#### IECoreArnold
+
+- Added support for matrix parameters
+
+#### IECoreAppleseed
+
+- Fliped t coordinate for mesh UVs.
+- Removed ToAppleseed converters. Moved code to Algo files.
+- Fixed compile issues for IECoreAppleseed on gcc 4.1.2
+- Fixing SConstruct configuration for Appleseed
+
+#### Build
+
+- Exposing OSL and OIIO build options
+
+9.10.0
+======
+
+#### IECoreArnold
+
+- Remove support for Arnold < 4.1.
+- Support for progressive renders.
+- ParameterAlgo
+  - Support for arrays in getParameter().
+  - Support for RGBA and Point2 parameters.
+  - Support for V3fVectorData.
+- Flipped t coordinate for mesh uvs.
+- Suppressed conversion of stIndices primvar.
+
+9.9.1
+=====
+
+#### Build
+
+- Added INSTALL_ARNOLDPYTHON_DIR build option, to specify an independent location
+  for the installation of the IECoreArnold python module.
+- Fixed linking of IECoreArnold.
+
+9.9.0
+=====
+
+#### IECore
+
+- Python Module
+  - Use RTLD_GLOBAL to load C++ modules.
+
+#### IECoreMaya
+
+- Added a MightHaveFn to IECoreMaya::LiveScene::registerCustomAttributes().
+  - If MightHaveFn is specified, it will be called before NamesFn to allow a cheap early out.
+
+#### IECoreHoudini
+
+- Implemented Cob GEOIO_Translator::fileStat to return the bounding box from the cob header.
+
+#### IECoreArnold
+
+- Renderer
+  - Apply name to camera nodes.
+  - Support "ai:shape:" attribute prefix.
+  - Add support for creating Arnold volume nodes.
+- Add SphereAlgo with conversion from IECore::SpherePrimitive.
+
+#### Build
+
+- Fixed PYTHONPATH for IECoreArnold tests
+- Updated SConstruct and tests for Arnold 4.2
+
+# 9.8.0
+
+#### IECore
+
+- Python Module
+  - Use RTLD_GLOBAL to load C++ modules.
+
+#### IECoreMaya
+
+- Added a MightHaveFn to IECoreMaya::LiveScene::registerCustomAttributes().
+  - If MightHaveFn is specified, it will be called before NamesFn to allow a cheap early out.
+
+#### IECoreHoudini
+
+- Implemented Cob GEOIO_Translator::fileStat to return the bounding box from the cob header.
+
+#### IECoreArnold
+
+- Renderer
+  - Apply name to camera nodes.
+  - Support "ai:shape:" attribute prefix.
+  - Add support for creating Arnold volume nodes.
+- Add SphereAlgo with conversion from IECore::SpherePrimitive.
+
+#### Build
+
+- Fixed PYTHONPATH for IECoreArnold tests
+- Updated SConstruct and tests for Arnold 4.2
+
+# 9.8.0
+
+#### IECoreMaya
+
+- Added plug conversion for MPointArray to IECore::Vector3f/3d (3d default) with Point interpretation.
+- Updated plug conversion for VectorArray to use Vector interpretation (rather than Numeric).
+- Preventing primary UV Set from being exported twice.
+- ieSceneShape expansion functions can optionally preserve the original namespace of the parent.
+
+#### IECoreRI
+
+- Added initial support for 3delight OSL via NSI
+
+#### IECoreAppleseed
+
+- Renamed volume priority attribute to medium priority.
+
+# 9.7.1
+
+#### IECore
+
+- LinkedScene : The message for linked ancestor tags is now Debug level instead of Warning.
+
+#### IECoreHoudini
+
+- Fixed "name" attribute bug in IECoreHoudini::LiveScene, which was triggered by using an attribwrangle on the name attribute.
+
+# 9.7.0
+
+#### IECore
+
+- Fixed potential crash in MeshPrimitiveEvaluator::barycentricPosition() (#475).
+- Fixed ConfigLoader to ignore duplicate paths. Note that this may change configuration
+  behaviour for malformed paths with duplicates (#474).
+
+#### IECoreArnold
+
+- Added support for both deformation and transform blur (#473).
+- Refactored all Cortex->Arnold conversion functionality into new Algo.h headers,
+  removing the old FromCoreConverter based classes. This does represent a compatibilit
+  break, but IECoreArnold is in contrib, where no compatibility guarantees exist.
+- Fixed warnings relating to the data type of Arnold's visibility parameter, which
+  has been changed to AtByte from AtInt.
+
+# 9.6.1
+
+#### IECore
+
+- MessageHandler handles python exceptions before they get to c++
+
+#### IECoreMaya
+
+- Sorting childNames during ieSceneShape expansion
+
+#### IECoreAppleseed
+
+- Added nested volume priority attribute
+
+# 9.6.0
+
+#### IECore
+
+- Added support for procedurals without bounds
+- Fixed time remapping for old style link attributes in LinkedScenes
+
+#### IECoreHoudini
+
+- Fixed crash when converting integer and float list attributes in Houdini
+
+#### IECoreAppleseed
+
+- Fixed attribute stack bug
+
+#### IECoreRI
+
+- Added support for procedurals without bounds
+
+#### IECoreGL
+
+- Added support for procedurals without bounds
+
+#### IECoreArnold
+
+- Added support for procedurals without bounds
+
+#### IECoreMaya
+
+- Optimized IECoreMaya SceneShape expansion
+
+# 9.5.0
+
+#### IECoreNuke
+
+- Adding support for PointsPrimitives in Nuke scene reader
+
+# 9.4.0
+
+#### IECore
+
+- Added unit tests for IECore.M33f/M44f indexing
+
+#### IECoreHoudini
+
+- Houdini can now round trip M33f and M44f primvars, including detail attributes/constant primvars.
+
+# 9.3.0
+
+#### IECore
+
+- Added const parameterData method to IECore::Light
+- Added alternate AreaLight shader control parameter named "__areaLight"
+
+#### IECoreHoudini
+
+- String tables for converted string primitive variables are now sorted alphabetically
+- Houdini geo converters now support M44f primvars
+
+# 9.2.0
+
+#### IECoreGL
+
+- Added ShaderStateComponent::hash() method.
+- Fixed wireframe rendering with user vertex shaders.
+- Fixed IDRender selection with user vertex shaders.
+- Fixed selection with custom vertex shaders on OSX.
+
+#### IECoreAppleseed
+
+- Added default render params needed by interactive final rendering.
+- Fix display when used with the ImageDisplayDriver driver type.
+
+#### IECoreHoudini
+
+- Removed deep RAT support for Houdini 15 (it is still there for older Houdini versions)
+
+#### Build
+
+- Houdini 15 compatibility
+- Fixed build issue for running 3delight inside Maya at IE
+
+# 9.1.0
+
+#### IECoreAppleseed
+
+- Support renderer type prefixes in Renderer::light().
+
+#### IECoreArnold
+
+- Support renderer type prefixes in Renderer::light().
+
+#### IECoreRI
+
+- Support renderer type prefixes in Renderer::light().
+
+#### IECoreMaya
+
+- Fixed crash when zooming in on coordinate systems in scene shapes
+
+#### Build
+
+- 3delight display drivers and procedurals now installed to compiler specific locations at IE
+
+# 9.0.0
+
+#### IECore
+
+- Renamed GeometricData::Interpretation::Numeric to GeometricData::Interpretation::None, so that it makes sense as a deafult for non-numeric types.
+  - GeometricData::Interpretation::Numeric still exists for compatibility.
+- Added DataAlgo.h with setDataInterpretation() and getDataInterpretation().
+
+#### IECoreMaya
+
+- FromMayaCameraConverter now accounts for pixelAspectRatio.
+
+#### IECoreRI
+
+- Primitive variable types in RI now set from the prim var interpretation.  Type hints now ignored.
+
+#### IECoreAppleseed
+
+- Added support for shading overrides.
+- Added mesh tangents and motion normals.
+  - Mesh tangents (primitive variable uTangent) are now exported to appleseed meshes.
+  - Time varying tangents and normals for primitives with deformation blur are now exported if appleseed supports them (since version 1.2.0).
+- Fixed a warning message in ToAppleseedMeshConverter.
+
+#### Build
+
+- Travis : Updated to container-based build infrastructure.
+- Travis : Skipped some threading tests on Travis.
+
+# 9.0.0-b9
+
+#### IECore
+
+- Fixed shutdown crashes with ScopedGILLock (as seen in Gaffer 0.14.0.0)
+
+# 9.0.0-b8
+
+#### IECore
+
+- Added a new magic number for JPG compatibility
+
+#### IECoreMaya
+
+- Maya 2016 compile fixes for gcc 4.8
+
+#### IECoreAlembic
+
+- Fixed bug where face sets were treated as children.
+
+#### IECoreRI
+
+- Changed SXExecutor parameter interpretation.
+
+#### IECoreAppleseed
+
+- Added support for interactive non-editable final rendering.
+
+# 9.0.0-b7
+
+#### IECore
+
+- Storing the bounding box in .cob headers if the object is a VisibleRenderable.
+- TransformOp now takes a copy of the data before altering it.
+- GCC 4.8 compatibility.
+- Boost 1.55.0 compatibility.
+- TBB 4.3 compatibility.
+
+#### IECoreMaya
+
+- Fixed FromMayaCameraConverter to account for non-zero film offsets.
+- ToMayaCameraConverter now supports setting the film offset using blindData on the Camera.
+- Maya 2016 compatibility.
+
+#### IECoreHoudini
+
+- Fixed issue exporting string attributes when Houdini reports an extra null string in the detail.
+- Added support for converting quaternions to and from Houdini.
+- Houdini 14 compatibility.
+
+#### IECoreRI
+
+- SLOReader sets geometric interpretation on parameters.
+- ParameterList makes use of geometric interpretation when available.
+
+#### IECoreAppleseed
+
+- Fixed appleseed error while binding inputs of object instances.
+- Various options changes:
+  - Set decorrelate_pixels automatically depending on render passes.
+  - If the rendering_threads option is zero, use all CPU cores for rendering.
+  - If the as:cfg:pt:max_ray_intensity is zero, disable max intensity clamping.
+  - Disable max number of bounces for max_path_length options set to zero.
+  - Check the type of the Data passed to setOption before accessing it.
+
 # 9.0.0-b6
 
 #### IECore

@@ -32,11 +32,14 @@
 //
 //////////////////////////////////////////////////////////////////////////
 
+#include "UT/UT_Version.h"
+
+#if UT_MAJOR_VERSION_INT < 15
+
 #include "boost/format.hpp"
 
 #include "UT/UT_Matrix.h"
 #include "UT/UT_Options.h"
-#include "UT/UT_Version.h"
 
 #include "IECore/CompoundParameter.h"
 #include "IECore/FileNameParameter.h"
@@ -260,7 +263,19 @@ void RATDeepImageWriter::open()
 	
 #if UT_MAJOR_VERSION_INT >= 13
 
-	bool success = m_outputFile->create( fileName().c_str(), resolution.x, resolution.y );
+	bool success = false;
+	const std::string &path = fileName();
+	if ( !path.empty() )
+	{
+		try
+		{
+			success = m_outputFile->create( path.c_str(), resolution.x, resolution.y );
+		}
+		catch ( ... )
+		{
+			success = false;
+		}
+	}
 	
 #else
 
@@ -316,3 +331,5 @@ void RATDeepImageWriter::open()
 		throw IOException( std::string( "Failed to open file \"" ) + fileName() + "\" for writing." );
 	}
 }
+
+#endif // UT_MAJOR_VERSION_INT

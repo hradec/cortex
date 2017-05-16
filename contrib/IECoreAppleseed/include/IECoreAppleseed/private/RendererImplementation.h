@@ -48,7 +48,6 @@
 
 #include "IECoreAppleseed/Renderer.h"
 #include "IECoreAppleseed/private/AttributeState.h"
-#include "IECoreAppleseed/private/AppleseedUtil.h"
 #include "IECoreAppleseed/private/EditBlockHandler.h"
 #include "IECoreAppleseed/private/LightHandler.h"
 #include "IECoreAppleseed/private/MotionBlockHandler.h"
@@ -131,7 +130,8 @@ class RendererImplementation : public IECore::Renderer
 
 		void constructCommon();
 
-		bool isInteractive() const;
+		bool isProjectGen() const;
+		bool isEditable() const;
 
 		void setCamera( const std::string &name, IECore::CameraPtr cortexCamera,
 			foundation::auto_release_ptr<renderer::Camera> &camera );

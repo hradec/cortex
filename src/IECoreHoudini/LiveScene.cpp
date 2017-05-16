@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2013-2014, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2013-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -40,15 +40,25 @@
 #include "OP/OP_Input.h" 
 #include "MGR/MGR_Node.h" 
 #include "MOT/MOT_Director.h" 
+#include "UT/UT_Version.h" 
 #include "UT/UT_WorkArgs.h" 
 
 #include "IECore/Group.h"
 #include "IECore/TransformationMatrixData.h"
 
 #include "IECoreHoudini/Convert.h"
-#include "IECoreHoudini/GU_CortexPrimitive.h"
 #include "IECoreHoudini/LiveScene.h"
 #include "IECoreHoudini/FromHoudiniGeometryConverter.h"
+
+#if UT_MAJOR_VERSION_INT >= 14
+
+typedef GA_PrimitiveGroup GroupType;
+
+#else
+
+typedef GA_ElementGroup GroupType;
+
+#endif
 
 using namespace IECore;
 using namespace IECoreHoudini;
@@ -444,7 +454,8 @@ bool LiveScene::hasTag( const Name &name, int filter ) const
 				if ( const GU_Detail *geo = readHandle.getGdp() )
 				{
 					GA_Range prims = geo->getPrimitiveRange();
-					for ( GA_GroupTable::iterator<GA_ElementGroup> it=geo->primitiveGroups().beginTraverse(); !it.atEnd(); ++it )
+
+					for ( GA_GroupTable::iterator<GroupType> it=geo->primitiveGroups().beginTraverse(); !it.atEnd(); ++it )
 					{
 						GA_PrimitiveGroup *group = static_cast<GA_PrimitiveGroup*>( it.group() );
 						if ( group->getInternal() || group->isEmpty() )
@@ -526,7 +537,8 @@ void LiveScene::readTags( NameList &tags, int filter ) const
 				if ( const GU_Detail *geo = readHandle.getGdp() )
 				{
 					GA_Range prims = geo->getPrimitiveRange();
-					for ( GA_GroupTable::iterator<GA_ElementGroup> it=geo->primitiveGroups().beginTraverse(); !it.atEnd(); ++it )
+
+					for ( GA_GroupTable::iterator<GroupType> it=geo->primitiveGroups().beginTraverse(); !it.atEnd(); ++it )
 					{
 						GA_PrimitiveGroup *group = static_cast<GA_PrimitiveGroup*>( it.group() );
 						if ( group->getInternal() || group->isEmpty() )
@@ -591,15 +603,24 @@ bool LiveScene::hasObject() const
 		
 		const GA_Attribute *nameAttr = nameAttrRef.getAttribute();
 		const GA_AIFSharedStringTuple *tuple = nameAttr->getAIFSharedStringTuple();
-		GA_Size numShapes = tuple->getTableEntries( nameAttr );
+		GA_StringTableStatistics stats;
+		tuple->getStatistics( nameAttr, stats );
+		GA_Size numShapes = stats.getEntries();
 		if ( !numShapes )
 		{
 			return true;
 		}
 		
-		for ( GA_Size i=0; i < numShapes; ++i )
+		GA_Size numStrings = stats.getCapacity();
+		for ( GA_Size i=0; i < numStrings; ++i )
 		{
-			const char *currentName = tuple->getTableString( nameAttr, tuple->validateTableHandle( nameAttr, i ) );
+			GA_StringIndexType validatedIndex = tuple->validateTableHandle( nameAttr, i );
+			if ( validatedIndex < 0 )
+			{
+				continue;
+			}
+			
+			const char *currentName = tuple->getTableString( nameAttr, validatedIndex );
 			const char *match = matchPath( currentName );
 			if ( match && *match == *emptyString )
 			{
@@ -716,10 +737,16 @@ void LiveScene::childNames( NameList &childNames ) const
 		
 		const GA_Attribute *nameAttr = nameAttrRef.getAttribute();
 		const GA_AIFSharedStringTuple *tuple = nameAttr->getAIFSharedStringTuple();
-		GA_Size numShapes = tuple->getTableEntries( nameAttr );
-		for ( GA_Size i=0; i < numShapes; ++i )
+		GA_Size numStrings = tuple->getTableEntries( nameAttr );
+		for ( GA_Size i=0; i < numStrings; ++i )
 		{
-			const char *currentName = tuple->getTableString( nameAttr, tuple->validateTableHandle( nameAttr, i ) );
+			GA_StringIndexType validatedIndex = tuple->validateTableHandle( nameAttr, i );
+			if ( validatedIndex < 0 )
+			{
+				continue;
+			}
+			
+			const char *currentName = tuple->getTableString( nameAttr, validatedIndex );
 			const char *match = matchPath( currentName );
 			if ( match && *match != *emptyString )
 			{
@@ -888,10 +915,16 @@ OP_Node *LiveScene::retrieveChild( const Name &name, Path &contentPath, MissingB
 				{
 					const GA_Attribute *nameAttr = nameAttrRef.getAttribute();
 					const GA_AIFSharedStringTuple *tuple = nameAttr->getAIFSharedStringTuple();
-					GA_Size numShapes = tuple->getTableEntries( nameAttr );
-					for ( GA_Size i=0; i < numShapes; ++i )
+					GA_Size numStrings = tuple->getTableEntries( nameAttr );
+					for ( GA_Size i=0; i < numStrings; ++i )
 					{
-						const char *currentName = tuple->getTableString( nameAttr, tuple->validateTableHandle( nameAttr, i ) );
+						GA_StringIndexType validatedIndex = tuple->validateTableHandle( nameAttr, i );
+						if ( validatedIndex < 0 )
+						{
+							continue;
+						}
+						
+						const char *currentName = tuple->getTableString( nameAttr, validatedIndex );
 						const char *match = matchPath( currentName );
 						if ( match && *match != *emptyString )
 						{

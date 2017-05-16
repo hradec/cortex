@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2008-2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2008-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -84,17 +84,20 @@ const StringVectorParameter * TransformOp::primVarsParameter() const
 void TransformOp::modifyPrimitive( Primitive * primitive, const CompoundObject * operands )
 {
 	const std::vector<std::string> &pv = m_primVarsParameter->getTypedValue();
-	std::set< Data* > visitedData;
 	for ( std::vector<std::string>::const_iterator it = pv.begin(); it != pv.end(); ++it )
 	{
 		PrimitiveVariableMap::iterator pIt = primitive->variables.find( *it );
-		if ( pIt == primitive->variables.end() || !pIt->second.data || visitedData.find( pIt->second.data.get() ) != visitedData.end() )
+		if ( pIt == primitive->variables.end() || !pIt->second.data )
 		{
 			continue;
 		}
 		
+		// We need to take a copy of the data in case other
+		// primitive variables were referencing the same data,
+		// and are not in the list of variables to modify.
+		pIt->second.data = pIt->second.data->copy();
+		
 		Data *data = pIt->second.data.get();
-		visitedData.insert( data );
 		
 		// fix for old files that don't store Interpretation properly
 		V3fVectorData *v3fData = runTimeCast<V3fVectorData>( data );
@@ -102,16 +105,16 @@ void TransformOp::modifyPrimitive( Primitive * primitive, const CompoundObject *
 		{
 			GeometricData::Interpretation interp = v3fData->getInterpretation();
 			
-			if ( interp == GeometricData::Numeric )
+			if ( interp == GeometricData::None )
 			{
 				if ( *it == "P" )
 				{
-					IECore::msg( IECore::MessageHandler::Warning, "TransformOp", "Primitive contains Numeric data named P. Converting to Point data." );
+					IECore::msg( IECore::MessageHandler::Warning, "TransformOp", "Primitive contains data named P with no interpretation. Converting to Point data." );
 					v3fData->setInterpretation( GeometricData::Point );
 				}
 				else if ( *it == "N" )
 				{
-					IECore::msg( IECore::MessageHandler::Warning, "TransformOp", "Primitive contains Numeric data named N. Converting to Normal data." );
+					IECore::msg( IECore::MessageHandler::Warning, "TransformOp", "Primitive contains data named N with no interpretation. Converting to Normal data." );
 					v3fData->setInterpretation( GeometricData::Normal );
 				}
 			}

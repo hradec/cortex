@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2010-2013, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2010-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -40,6 +40,7 @@
 #include "IECoreHoudini/GEO_CobIOTranslator.h"
 #include "IECoreHoudini/FromHoudiniGeometryConverter.h"
 #include "IECoreHoudini/ToHoudiniGeometryConverter.h"
+#include "IECoreHoudini/Convert.h"
 
 using namespace IECore;
 using namespace IECoreHoudini;
@@ -80,7 +81,7 @@ int GEO_CobIOTranslator::checkMagicNumber( unsigned magic )
 	return 0;
 }
 
-GA_Detail::IOStatus GEO_CobIOTranslator::fileLoad( GEO_Detail *geo, UT_IStream &is, int ate_magic )
+GA_Detail::IOStatus GEO_CobIOTranslator::fileLoad( GEO_Detail *geo, UT_IStream &is, bool ate_magic )
 {
 	((UT_IFStream&)is).close();
 	
@@ -117,10 +118,18 @@ GA_Detail::IOStatus GEO_CobIOTranslator::fileLoad( GEO_Detail *geo, UT_IStream &
 	return converter->convert( handle );
 }
 
-GA_Detail::IOStatus GEO_CobIOTranslator::fileSaveToFile( const GEO_Detail *geo, ostream &os, const char *fileName )
+GA_Detail::IOStatus GEO_CobIOTranslator::fileLoad( GEO_Detail *geo, UT_IStream &is, int ate_magic )
 {
-	((ofstream&)os).close();
-	
+	return fileLoad( geo, is, (bool)ate_magic );
+}
+
+GA_Detail::IOStatus GEO_CobIOTranslator::fileSave( const GEO_Detail *geo, std::ostream &os )
+{
+	return false;
+}
+
+GA_Detail::IOStatus GEO_CobIOTranslator::fileSaveToFile( const GEO_Detail *geo, const char *fileName )
+{
 	GU_DetailHandle handle;
 	handle.allocateAndSet( (GU_Detail*)geo, false );
 	
@@ -146,5 +155,36 @@ GA_Detail::IOStatus GEO_CobIOTranslator::fileSaveToFile( const GEO_Detail *geo, 
 		return false;
 	}
 	
+	return true;
+}
+
+GA_Detail::IOStatus GEO_CobIOTranslator::fileSaveToFile( const GEO_Detail *geo, std::ostream &os, const char *fileName )
+{
+	((std::ofstream&)os).close();
+	
+	return fileSaveToFile( geo, fileName );
+}
+
+bool GEO_CobIOTranslator::fileStat( const char *fileName, GA_Stat &stat, uint level )
+{
+	try
+	{
+		ReaderPtr reader = Reader::create( fileName );
+		if ( !reader )
+		{
+			return false;
+		}
+		
+		ConstCompoundObjectPtr header = reader->readHeader();
+
+		UT_BoundingBox bbox = convert<UT_BoundingBox>( reader->readHeader()->member<const Box3fData>( "bound", true )->readable() );
+
+		stat.setBounds( bbox );
+	}
+	catch ( ... )
+	{
+		return false;
+	}
+
 	return true;
 }

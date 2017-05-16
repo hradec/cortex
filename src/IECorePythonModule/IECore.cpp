@@ -300,6 +300,8 @@
 #include "IECorePython/EXRDeepImageWriterBinding.h"
 #include "IECorePython/ExternalProceduralBinding.h"
 #include "IECorePython/ClippingPlaneBinding.h"
+#include "IECorePython/DataAlgoBinding.h"
+#include "IECorePython/MeshAlgoBinding.h"
 #include "IECore/IECore.h"
 
 using namespace IECorePython;
@@ -594,6 +596,8 @@ BOOST_PYTHON_MODULE(_IECore)
 	bindObjectPool();
 	bindExternalProcedural();
 	bindClippingPlane();
+	bindDataAlgo();
+	bindMeshAlgo();
 
 #ifdef IECORE_WITH_DEEPEXR
 

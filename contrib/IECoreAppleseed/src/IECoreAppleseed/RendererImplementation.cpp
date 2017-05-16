@@ -53,6 +53,7 @@
 #include "renderer/api/rendering.h"
 #include "renderer/api/surfaceshader.h"
 #include "renderer/api/utility.h"
+#include "renderer/api/version.h"
 
 #include "IECore/MessageHandler.h"
 #include "IECore/MeshPrimitive.h"
@@ -60,10 +61,13 @@
 #include "IECore/Transform.h"
 
 #include "IECoreAppleseed/private/RendererImplementation.h"
-#include "IECoreAppleseed/private/LogTarget.h"
 #include "IECoreAppleseed/private/BatchPrimitiveConverter.h"
 #include "IECoreAppleseed/private/InteractivePrimitiveConverter.h"
-#include "IECoreAppleseed/ToAppleseedCameraConverter.h"
+#include "IECoreAppleseed/CameraAlgo.h"
+#include "IECoreAppleseed/EntityAlgo.h"
+#include "IECoreAppleseed/LogTarget.h"
+#include "IECoreAppleseed/ParameterAlgo.h"
+#include "IECoreAppleseed/RendererController.h"
 
 using namespace IECore;
 using namespace IECoreAppleseed;
@@ -92,11 +96,15 @@ IECoreAppleseed::RendererImplementation::RendererImplementation()
 
 	m_primitiveConverter.reset( new InteractivePrimitiveConverter( m_project->search_paths() ) );
 	m_motionHandler.reset( new MotionBlockHandler( m_transformStack, *m_primitiveConverter ) );
-	m_editHandler.reset( new EditBlockHandler( *m_project ) );
 }
 
 IECoreAppleseed::RendererImplementation::RendererImplementation( const string &fileName )
 {
+	if( fileName.empty() )
+	{
+		msg( MessageHandler::Error, "IECoreAppleseed::RendererImplementation::RendererImplementation", "Empty project filename" );
+	}
+
 	m_fileName = fileName;
 	m_projectPath = filesystem::path( fileName ).parent_path();
 
@@ -130,13 +138,25 @@ void IECoreAppleseed::RendererImplementation::constructCommon()
 
 	// Insert some config params needed by the interactive renderer.
 	asr::Configuration *cfg = m_project->configurations().get_by_name( "interactive" );
-	asr::ParamArray &params = cfg->get_parameters();
-	params.insert( "sample_renderer", "generic" );
-	params.insert( "sample_generator", "generic" );
-	params.insert( "tile_renderer", "generic" );
-	params.insert( "frame_renderer", "progressive" );
-	params.insert( "lighting_engine", "pt" );
-	params.insert_path( "progressive_frame_renderer.max_fps", "5" );
+	asr::ParamArray *params = &cfg->get_parameters();
+	params->insert( "sample_renderer", "generic" );
+	params->insert( "sample_generator", "generic" );
+	params->insert( "tile_renderer", "generic" );
+	params->insert( "frame_renderer", "progressive" );
+	params->insert( "lighting_engine", "pt" );
+	params->insert_path( "progressive_frame_renderer.max_fps", "5" );
+
+	// Insert some config params needed by the final renderer.
+	cfg = m_project->configurations().get_by_name( "final" );
+	params = &cfg->get_parameters();
+	params->insert( "sample_renderer", "generic" );
+	params->insert( "sample_generator", "generic" );
+	params->insert( "tile_renderer", "generic" );
+	params->insert( "frame_renderer", "generic" );
+	params->insert( "lighting_engine", "pt" );
+	params->insert( "pixel_renderer", "uniform" );
+	params->insert( "sampling_mode", "rng" );
+	params->insert_path( "uniform_pixel_renderer.samples", "1" );
 
 	// create some basic project entities.
 	asf::auto_release_ptr<asr::Frame> frame( asr::FrameFactory::create( "beauty", asr::ParamArray().insert( "resolution", "640 480" ) ) );
@@ -166,20 +186,104 @@ void IECoreAppleseed::RendererImplementation::setOption( const string &name, Con
 
 		string optName( name, 7, string::npos );
 		replace( optName.begin(), optName.end(), ':', '.' );
-		string valueStr = dataToString( value );
+		string valueStr = ParameterAlgo::dataToString( value );
 
 		if( !valueStr.empty() )
 		{
+			if( optName == "rendering_threads" )
+			{
+				if( const IntData *numThreadsData = runTimeCast<const IntData>( value.get() ) )
+				{
+					// if numThreads is 0, we want to use all the CPU cores.
+					// We can remove any previous "rendering_threads" param and
+					// let appleseed choose the number of threads to use.
+					if( numThreadsData->readable() == 0 )
+					{
+						m_project->configurations().get_by_name( "final" )->get_parameters().remove_path( optName.c_str() );
+						m_project->configurations().get_by_name( "interactive" )->get_parameters().remove_path( optName.c_str() );
+						return;
+					}
+				}
+				else
+				{
+					msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", "as:cfg:rendering_threads option expects an IntData value." );
+				}
+			}
+			else if( algorithm::ends_with( optName, "max_path_length" ) )
+			{
+				if( const IntData *maxPathLengthData = runTimeCast<const IntData>( value.get() ) )
+				{
+					// if maxPathLength is 0, we want to use and unlimited number of bounces and let
+					// russian roulette terminate paths when their contribution is too low.
+					// We can disable max path lengths by remove any previous param.
+					if( maxPathLengthData->readable() == 0 )
+					{
+						m_project->configurations().get_by_name( "final" )->get_parameters().remove_path( optName.c_str() );
+						m_project->configurations().get_by_name( "interactive" )->get_parameters().remove_path( optName.c_str() );
+						return;
+					}
+				}
+				else
+				{
+					msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", format( "%s option expects an IntData value." ) % optName );
+				}
+			}
+			else if( optName == "pt.max_ray_intensity" )
+			{
+				if( const FloatData *maxIntensityData = runTimeCast<const FloatData>( value.get() ) )
+				{
+					// if maxIntensity is 0 disable it.
+					if( maxIntensityData->readable() == 0.0f )
+					{
+						m_project->configurations().get_by_name( "final" )->get_parameters().remove_path( optName.c_str() );
+						m_project->configurations().get_by_name( "interactive" )->get_parameters().remove_path( optName.c_str() );
+						return;
+					}
+				}
+				else
+				{
+					msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", "as:cfg:pt:max_ray_intensity option expects a FloatData value." );
+				}
+			}
+			else if( optName == "generic_frame_renderer.passes" )
+			{
+				if( const IntData *numPassesData = runTimeCast<const IntData>( value.get() ) )
+				{
+					int numPasses = numPassesData->readable();
+
+					// if the number of passes is greater than one, we need to
+					// switch the shading result framebuffer in the final rendering config.
+					m_project->configurations().get_by_name( "final" )->get_parameters().insert( "shading_result_framebuffer", numPasses > 1 ? "permanent" : "ephemeral" );
+
+					// enable decorrelate pixels if the number of render passes is greater than one.
+					m_project->configurations().get_by_name( "final" )->get_parameters().insert_path( "uniform_pixel_renderer.decorrelate_pixels", numPasses > 1 ? "true" : "false" );
+					m_project->configurations().get_by_name( "interactive" )->get_parameters().insert_path( "uniform_pixel_renderer.decorrelate_pixels", numPasses > 1 ? "true" : "false" );
+				}
+				else
+				{
+					msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", "as:cfg:generic_frame_renderer:passes option expects an IntData value." );
+				}
+			}
+			else if( optName == "shading_engine.override_shading.mode" )
+			{
+				if( const StringData *overrideData = runTimeCast<const StringData>( value.get() ) )
+				{
+					// if no shading override is specified, remove the params.
+					if( overrideData->readable() == "no_override" )
+					{
+						m_project->configurations().get_by_name( "final" )->get_parameters().remove_path( "shading_engine.override_shading" );
+						m_project->configurations().get_by_name( "interactive" )->get_parameters().remove_path( "shading_engine.override_shading" );
+						return;
+					}
+				}
+				else
+				{
+					msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", "as:cfg:shading_engine:override_shading:mode option expects a StringData value." );
+				}
+			}
+
 			m_project->configurations().get_by_name( "final" )->get_parameters().insert_path( optName.c_str(), valueStr.c_str() );
 			m_project->configurations().get_by_name( "interactive" )->get_parameters().insert_path( optName.c_str(), valueStr.c_str() );
-
-			// if the number of passes is different than one, we need to
-			// switch the shading result framebuffer in the final rendering config.
-			if( optName == "generic_frame_renderer.passes" && !isInteractive() )
-			{
-				int numPasses = static_cast<const IntData*>( value.get() )->readable();
-				m_project->configurations().get_by_name( "final" )->get_parameters().insert( "shading_result_framebuffer", numPasses == 1 ? "ephemeral" : "permanent" );
-			}
 		}
 	}
 	else if( 0 == name.compare( 0, 3, "as:" ) )
@@ -190,9 +294,9 @@ void IECoreAppleseed::RendererImplementation::setOption( const string &name, Con
 
 		if( optName == "searchpath" )
 		{
-			if( const StringData *f = runTimeCast<const StringData>( value.get() ) )
+			if( const StringData *searchPathData = runTimeCast<const StringData>( value.get() ) )
 			{
-				m_project->search_paths().push_back( f->readable().c_str() );
+				m_project->search_paths().push_back( searchPathData->readable().c_str() );
 			}
 			else
 			{
@@ -214,7 +318,21 @@ void IECoreAppleseed::RendererImplementation::setOption( const string &name, Con
 	}
 	else if( name == "editable" )
 	{
-		// ignore
+		if( const BoolData *editableData = runTimeCast<const BoolData>( value.get() ) )
+		{
+			if( editableData->readable() )
+			{
+				m_editHandler.reset( new EditBlockHandler( *m_project ) );
+			}
+			else
+			{
+				m_editHandler.reset();
+			}
+		}
+		else
+		{
+			msg( Msg::Error, "IECoreAppleseed::RendererImplementation::setOption", "editable option expects an BoolData value." );
+		}
 	}
 	else
 	{
@@ -246,7 +364,7 @@ void IECoreAppleseed::RendererImplementation::camera( const string &name, const 
 	}
 
 	// ignore extra cameras if we already have one.
-	if( !insideEditBlock() && m_project->get_scene()->get_camera() )
+	if( !insideEditBlock() && !m_project->get_scene()->cameras().empty() )
 	{
 		return;
 	}
@@ -254,9 +372,9 @@ void IECoreAppleseed::RendererImplementation::camera( const string &name, const 
 	// ignore edits for extra cameras.
 	if( insideEditBlock() )
 	{
-		assert( m_project->get_scene()->get_camera() );
+		assert( !m_project->get_scene()->cameras().empty() );
 
-		if( name != m_project->get_scene()->get_camera()->get_name() )
+		if( name != m_project->get_scene()->cameras().get_by_index( 0 )->get_name() )
 		{
 			return;
 		}
@@ -266,8 +384,7 @@ void IECoreAppleseed::RendererImplementation::camera( const string &name, const 
 	CameraPtr cortexCamera = new Camera( name, 0, params );
 	cortexCamera->addStandardParameters();
 
-	ToAppleseedCameraConverterPtr converter = new ToAppleseedCameraConverter( cortexCamera );
-	asf::auto_release_ptr<asr::Camera> appleseedCamera( static_cast<asr::Camera*>( converter->convert() ) );
+	asf::auto_release_ptr<asr::Camera> appleseedCamera( CameraAlgo::convert( cortexCamera.get() ) );
 
 	if( !appleseedCamera.get() )
 	{
@@ -278,7 +395,7 @@ void IECoreAppleseed::RendererImplementation::camera( const string &name, const 
 	if( insideEditBlock() )
 	{
 		// Update the camera.
-		asr::Camera *camera = m_project->get_scene()->get_camera();
+		asr::Camera *camera = m_project->get_scene()->cameras().get_by_index( 0 );
 
 		// Update the transform if needed.
 		if( m_transformStack.size() )
@@ -316,7 +433,7 @@ void IECoreAppleseed::RendererImplementation::display( const string &name, const
 	}
 	else
 	{
-		asr::ParamArray params = convertParams( parameters );
+		asr::ParamArray params = ParameterAlgo::convertParams( parameters );
 		params.insert( "displayName", name.c_str() );
 		params.insert( "type", type.c_str() );
 		params.insert( "data", data.c_str() );
@@ -356,7 +473,7 @@ void IECoreAppleseed::RendererImplementation::worldEnd()
 	}
 
 	// create a default camera if needed
-	if( !m_project->get_scene()->get_camera() )
+	if( m_project->get_scene()->cameras().empty() )
 	{
 		CameraPtr cortexCamera = new Camera();
 		cortexCamera->parameters()["projection"] = new StringData("perspective");
@@ -368,8 +485,7 @@ void IECoreAppleseed::RendererImplementation::worldEnd()
 
 		cortexCamera->addStandardParameters();
 
-		ToAppleseedCameraConverterPtr converter = new ToAppleseedCameraConverter( cortexCamera );
-		asf::auto_release_ptr<asr::Camera> camera( static_cast<asr::Camera*>( converter->convert() ) );
+		asf::auto_release_ptr<asr::Camera> camera( CameraAlgo::convert( cortexCamera.get() ) );
 		assert( camera.get() );
 
 		setCamera( "camera", cortexCamera, camera );
@@ -379,13 +495,27 @@ void IECoreAppleseed::RendererImplementation::worldEnd()
 	asf::auto_release_ptr<asr::AssemblyInstance> assemblyInstance = asr::AssemblyInstanceFactory::create( "assembly_inst", asr::ParamArray(), "assembly" );
 	m_project->get_scene()->assembly_instances().insert( assemblyInstance );
 
-	if( isInteractive() )
+	// render or export the project
+	if( isEditable() )
 	{
 		m_editHandler->startRendering();
 	}
+	else if( isProjectGen() )
+	{
+#if APPLESEED_VERSION > 10400
+		const int writeOptions = asr::ProjectFileWriter::OmitHandlingAssetFiles | asr::ProjectFileWriter::OmitWritingGeometryFiles;
+#else
+		const int writeOptions = asr::ProjectFileWriter::OmitBringingAssets | asr::ProjectFileWriter::OmitWritingGeometryFiles;
+#endif
+		asr::ProjectFileWriter::write( *m_project, m_fileName.c_str(), writeOptions );
+	}
 	else
 	{
-		asr::ProjectFileWriter::write( *m_project, m_fileName.c_str(), asr::ProjectFileWriter::OmitBringingAssets | asr::ProjectFileWriter::OmitWritingGeometryFiles );
+		// interactive non-editable render.
+		RendererController rendererController;
+		asr::Configuration *cfg = m_project->configurations().get_by_name( "final" );
+		asr::MasterRenderer renderer( *m_project, cfg->get_parameters(), &rendererController);
+		renderer.render();
 	}
 }
 
@@ -517,8 +647,21 @@ void IECoreAppleseed::RendererImplementation::light( const string &name, const s
 		return;
 	}
 
+	const char *unprefixedName = name.c_str();
+	if( name.find( ':' ) != string::npos )
+	{
+		if( boost::starts_with( name, "as:" ) )
+		{
+			unprefixedName += 3;
+		}
+		else
+		{
+			return;
+		}
+	}
+
 	// check if the light is an environment light.
-	if( algorithm::ends_with( name, "_environment_edf" ) )
+	if( algorithm::ends_with( unprefixedName, "_environment_edf" ) )
 	{
 		const string &lightName = m_attributeStack.top().name();
 		const string *environmentEDFName = getOptionAs<string>( "as:environment_edf" );
@@ -551,11 +694,11 @@ void IECoreAppleseed::RendererImplementation::light( const string &name, const s
 		}
 
 		const bool *envEDFVisible = getOptionAs<bool>( "as:environment_edf_background" );
-		m_lightHandler->environment( name, handle, envEDFVisible && *envEDFVisible, parameters );
+		m_lightHandler->environment( unprefixedName, handle, envEDFVisible && *envEDFVisible, parameters );
 	}
 	else
 	{
-		m_lightHandler->light( name, handle,
+		m_lightHandler->light( unprefixedName, handle,
 			m_transformStack.top().get_earliest_transform(), parameters );
 	}
 }
@@ -717,7 +860,7 @@ DataPtr IECoreAppleseed::RendererImplementation::command( const string &name, co
 
 void IECoreAppleseed::RendererImplementation::editBegin( const string &editType, const CompoundDataMap &parameters )
 {
-	if( isInteractive() )
+	if( isEditable() )
 	{
 		m_transformStack.clear();
 
@@ -743,7 +886,7 @@ void IECoreAppleseed::RendererImplementation::editBegin( const string &editType,
 
 void IECoreAppleseed::RendererImplementation::editEnd()
 {
-	if( isInteractive() )
+	if( isEditable() )
 	{
 		m_editHandler->editEnd();
 	}
@@ -757,19 +900,25 @@ void IECoreAppleseed::RendererImplementation::editEnd()
 // private
 /////////////////////////////////////////////////////////////////////////////////////////
 
-bool IECoreAppleseed::RendererImplementation::isInteractive() const
+bool IECoreAppleseed::RendererImplementation::isProjectGen() const
 {
-	return m_fileName.empty();
+	return !m_fileName.empty();
+}
+
+bool IECoreAppleseed::RendererImplementation::isEditable() const
+{
+	return m_editHandler.get();
 }
 
 void IECoreAppleseed::RendererImplementation::setCamera( const string &name, CameraPtr cortexCamera,
 	asf::auto_release_ptr<asr::Camera> &appleseedCamera )
 {
 	appleseedCamera->set_name( name.c_str() );
-	m_project->get_scene()->set_camera( appleseedCamera );
+	m_project->get_scene()->cameras().clear();
+	m_project->get_scene()->cameras().insert( appleseedCamera );
+	m_project->get_frame()->get_parameters().insert( "camera", name.c_str() );
 
 	// resolution
-	m_project->get_frame()->get_parameters().insert( "camera", name.c_str() );
 	const V2iData *resolution = cortexCamera->parametersData()->member<V2iData>( "resolution" );
 	asf::Vector2i res( resolution->readable().x, resolution->readable().y );
 	m_project->get_frame()->get_parameters().insert( "resolution", res );
@@ -782,10 +931,10 @@ void IECoreAppleseed::RendererImplementation::setCamera( const string &name, Cam
 	// crop window
 	const Box2fData *cropWindow = cortexCamera->parametersData()->member<Box2fData>( "cropWindow" );
 	asf::AABB2u crop;
-	crop.min[0] = cropWindow->readable().min.x * ( res[0] - 1 );
-	crop.min[1] = cropWindow->readable().min.y * ( res[1] - 1 );
-	crop.max[0] = cropWindow->readable().max.x * ( res[0] - 1 );
-	crop.max[1] = cropWindow->readable().max.y * ( res[1] - 1 );
+	crop.min[0] = (int)(cropWindow->readable().min.x * ( res[0] - 1 ));
+	crop.min[1] = (int)(cropWindow->readable().min.y * ( res[1] - 1 ));
+	crop.max[0] = (int)(cropWindow->readable().max.x * ( res[0] - 1 ));
+	crop.max[1] = (int)(cropWindow->readable().max.y * ( res[1] - 1 ));
 	m_project->get_frame()->set_crop_window( crop );
 }
 
@@ -824,7 +973,7 @@ void IECoreAppleseed::RendererImplementation::createAssemblyInstance( const stri
 	asf::auto_release_ptr<asr::AssemblyInstance> assemblyInstance = asr::AssemblyInstanceFactory::create( assemblyInstanceName.c_str(), params, assemblyName.c_str() );
 
 	assemblyInstance->transform_sequence() = m_transformStack.top();
-	insertEntityWithUniqueName( m_mainAssembly->assembly_instances(), assemblyInstance, assemblyInstanceName );
+	EntityAlgo::insertEntityWithUniqueName( m_mainAssembly->assembly_instances(), assemblyInstance, assemblyInstanceName );
 }
 
 bool RendererImplementation::insideMotionBlock() const

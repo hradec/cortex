@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2007-2011, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2007-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -89,6 +89,13 @@ FromMayaCameraConverter::FromMayaCameraConverter( const MDagPath &dagPath )
 
 	parameters()->addParameter( m_resolution );
 
+	parameters()->addParameter(
+		new FloatParameter(
+			"pixelAspectRatio",
+			"Specifies the pixel aspect ratio of the camera when mode is set to \"Specified\".",
+			1
+		)
+	);
 }
 
 IECore::ObjectPtr FromMayaCameraConverter::doConversion( const MDagPath &dagPath, IECore::ConstCompoundObjectPtr operands ) const
@@ -103,15 +110,18 @@ IECore::ObjectPtr FromMayaCameraConverter::doConversion( const MDagPath &dagPath
 	result->setTransform( new MatrixTransform( IECore::convert<Imath::M44f>( dagPath.inclusiveMatrix() ) ) );
 
 	V2i resolution;
+	float pixelAspectRatio = 1;
 	if( operands->member<IntData>( "resolutionMode" )->readable()==RenderGlobals )
 	{
 		MCommonRenderSettingsData renderSettings;
 		MRenderUtil::getCommonRenderSettings( renderSettings );
 		resolution = Imath::V2i( renderSettings.width, renderSettings.height );
+		pixelAspectRatio = renderSettings.pixelAspectRatio;
 	}
 	else
 	{
 		resolution = operands->member<V2iData>( "resolution" )->readable();
+		pixelAspectRatio = operands->member<FloatData>( "pixelAspectRatio" )->readable();
 	}
 	result->parameters()["resolution"] = new V2iData( resolution );
 
@@ -119,7 +129,7 @@ IECore::ObjectPtr FromMayaCameraConverter::doConversion( const MDagPath &dagPath
 	result->parameters()["clippingPlanes"] = new V2fData( clippingPlanes );
 
 	Imath::Box2d frustum;
-	fnCamera.getRenderingFrustum( (float)resolution.x / (float)resolution.y, frustum.min.x, frustum.max.x, frustum.min.y, frustum.max.y );
+	fnCamera.getRenderingFrustum( ( (float)resolution.x * pixelAspectRatio ) / (float)resolution.y, frustum.min.x, frustum.max.x, frustum.min.y, frustum.max.y );
 
 	if( fnCamera.isOrtho() )
 	{
@@ -133,13 +143,14 @@ IECore::ObjectPtr FromMayaCameraConverter::doConversion( const MDagPath &dagPath
 		result->parameters()["projection"] = new StringData( "perspective" );
 
 		// derive horizontal field of view from the viewing frustum
-		float fov = Math<double>::atan( frustum.max.x / clippingPlanes[0] ) * 2.0f;
+		float horizontalFrustumOffset = frustum.max.x - (frustum.max.x - frustum.min.x) / 2.0f;
+		float fov = Math<double>::atan( (frustum.max.x - horizontalFrustumOffset) / ( clippingPlanes[0] ) ) * 2.0f;
 		fov = radiansToDegrees( fov );
 		result->parameters()["projection:fov"] = new FloatData( fov );
 
 		// scale the frustum so that it's -1,1 in x and that gives us the screen window
 		float frustumScale = 2.0f/(frustum.max.x - frustum.min.x);
-		Box2f screenWindow( V2f( -1, frustum.min.y * frustumScale ), V2f( 1, frustum.max.y * frustumScale ) );
+		Box2f screenWindow( V2f( -1 + (horizontalFrustumOffset * frustumScale), frustum.min.y * frustumScale ), V2f( 1 + (horizontalFrustumOffset * frustumScale), frustum.max.y * frustumScale ) );
 		result->parameters()["screenWindow"] = new Box2fData( screenWindow );
 	}
 
@@ -147,6 +158,7 @@ IECore::ObjectPtr FromMayaCameraConverter::doConversion( const MDagPath &dagPath
 	CompoundDataPtr maya = new CompoundData;
 	result->blindData()->writable()["maya"] = maya;
 	maya->writable()["aperture"] = new V2fData( Imath::V2f( fnCamera.horizontalFilmAperture(), fnCamera.verticalFilmAperture() ) );
+	maya->writable()["filmOffset"] = new V2fData( Imath::V2f( fnCamera.horizontalFilmOffset(), fnCamera.verticalFilmOffset() ) );
 
 	return result;
 }

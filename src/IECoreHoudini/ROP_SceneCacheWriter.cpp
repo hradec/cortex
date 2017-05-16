@@ -1,6 +1,6 @@
 //////////////////////////////////////////////////////////////////////////
 //
-//  Copyright (c) 2013-2014, Image Engine Design Inc. All rights reserved.
+//  Copyright (c) 2013-2015, Image Engine Design Inc. All rights reserved.
 //
 //  Redistribution and use in source and binary forms, with or without
 //  modification, are permitted provided that the following conditions are
@@ -43,6 +43,7 @@
 #include "PRM/PRM_SpareData.h"
 #include "ROP/ROP_Error.h"
 #include "SOP/SOP_Node.h"
+#include "UT/UT_Interrupt.h"
 #include "UT/UT_PtrArray.h"
 #include "UT/UT_StringMMPattern.h"
 
@@ -257,17 +258,29 @@ ROP_RENDER_CODE ROP_SceneCacheWriter::renderFrame( fpreal time, UT_Interrupt *bo
 				reRoot = false;
 				const GA_Attribute *nameAttr = nameAttrRef.getAttribute();
 				const GA_AIFSharedStringTuple *tuple = nameAttr->getAIFSharedStringTuple();
-				GA_Size numShapes = tuple->getTableEntries( nameAttr );
+				GA_StringTableStatistics stats;
+				tuple->getStatistics( nameAttr, stats );
+				GA_Size numShapes = stats.getEntries();
 				if ( numShapes == 0 )
 				{
 					reRoot = true;
 				}
 				else if ( numShapes == 1 )
 				{
-					const char *name = tuple->getTableString( nameAttr, tuple->validateTableHandle( nameAttr, 0 ) );
-					if( ( name == 0 ) || ( !strcmp( name, "" ) || !strcmp( name, "/" ) ) )
+					GA_Size numStrings = stats.getCapacity();
+					for ( GA_Size i=0; i < numStrings; ++i )
 					{
-						reRoot = true;
+						GA_StringIndexType validatedIndex = tuple->validateTableHandle( nameAttr, i );
+						if ( validatedIndex < 0 )
+						{
+							continue;
+						}
+						
+						const char *name = tuple->getTableString( nameAttr, validatedIndex );
+						if( ( name == 0 ) || ( !strcmp( name, "" ) || !strcmp( name, "/" ) ) )
+						{
+							reRoot = true;
+						}
 					}
 				}
 			}
